@@ -1,0 +1,46 @@
+name: Release
+
+# Runs when a version tag like v0.2.0 is pushed, or manually from the Actions tab
+# (to build a release for a tag that already exists).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Check .toc version matches tag
+        run: |
+          toc_version=$(grep -m1 '^## Version:' HideSomeSurnames/HideSomeSurnames.toc | sed 's/^## Version:[[:space:]]*//' | tr -d '\r')
+          if [ "v$toc_version" != "$TAG" ]; then
+            echo "::error::TOC version 'v$toc_version' does not match tag '$TAG'"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq luajit
+          luajit tests/strip_spec.lua
+
+      - name: Build addon zip
+        run: zip -r HideSomeSurnames.zip HideSomeSurnames
+
+      - name: Create GitHub release
+        run: gh release create "$TAG" HideSomeSurnames.zip --title "$TAG" --generate-notes --verify-tag

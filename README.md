@@ -12,10 +12,12 @@ full name.
 > Expect a fix round once the client is available.
 
 ## Install
-1. Download this repo (Code > Download ZIP, or a release zip) and unzip.
-2. Copy the inner **`HideSomeSurnames`** folder (the one containing the `.toc`) into
-   `World of Warcraft\<version>\Interface\AddOns\`.
+1. Download `HideSomeSurnames.zip` from the [latest release](../../releases/latest).
+2. Unzip it into `World of Warcraft\<version>\Interface\AddOns\` so you end up with
+   `AddOns\HideSomeSurnames\HideSomeSurnames.toc`.
 3. Restart the game or `/reload`.
+
+(Don't use "Code > Download ZIP": that bundles the whole repo and the addon folder is nested one level down.)
 
 ## Configure
 Edit `HideSomeSurnames/Config.lua`:
@@ -35,4 +37,9 @@ Then `/reload`. An in-game editor is planned.
 - Third-party nameplate/unit-frame addons (Plater, ElvUI, ...) draw their own names and are not affected.
 
 ## Development
-`lua tests/strip_spec.lua` runs the name-logic tests with a plain Lua interpreter.
+`luajit tests/strip_spec.lua` runs the name-logic tests with a plain Lua interpreter.
+
+### Releasing
+1. Bump `## Version:` in `HideSomeSurnames/HideSomeSurnames.toc` (and `VERSION` in `HideSomeSurnames.lua`).
+2. Commit, then `git tag vX.Y.Z && git push origin master vX.Y.Z`.
+3. GitHub Actions runs the tests, checks the TOC version matches the tag, zips the addon and publishes the release.

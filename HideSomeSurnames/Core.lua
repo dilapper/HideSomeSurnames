@@ -43,3 +43,97 @@ function HSS.StripSurname(fullName, surnameSet)
 
     return fullName
 end
+
+-- Rewrites the VISIBLE text of player hyperlinks in a rendered chat line:
+--   |Hplayer:Dave Mhmm:...|h[Dave Mhmm]|h  ->  |Hplayer:Dave Mhmm:...|h[Dave]|h
+-- The link payload (what click-to-whisper reads) is never modified. Running it
+-- twice gives the same result as running it once.
+function HSS.StripSurnameInLinks(message, surnameSet)
+    if IsSecret(message) or type(message) ~= "string" then
+        return message
+    end
+
+    if not message:find("|Hplayer:", 1, true) then
+        return message
+    end
+
+    local result = message:gsub("(|Hplayer:([^|]*)|h)(.-)(|h)", function(openTag, payload, visible, closeTag)
+        local fullName = payload:match("^([^:]*)")
+        if not fullName or fullName == "" then
+            return nil
+        end
+
+        -- The visible text may show the name with or without the realm.
+        local candidates = { fullName }
+        local withoutRealm = fullName:match("^(.-)%-")
+        if withoutRealm and withoutRealm ~= "" then
+            candidates[#candidates + 1] = withoutRealm
+        end
+
+        for _, candidate in ipairs(candidates) do
+            local short = HSS.StripSurname(candidate, surnameSet)
+            if short ~= candidate then
+                local s, e = visible:find(candidate, 1, true)
+                if s then
+                    return openTag .. visible:sub(1, s - 1) .. short .. visible:sub(e + 1) .. closeTag
+                end
+            end
+        end
+
+        return nil -- leave this link exactly as Blizzard wrote it
+    end)
+
+    return result
+end
+
+-- ============================================================
+-- SAFETY
+-- ============================================================
+-- Rule: if we can't hide a surname, the surname stays visible. Nothing we hand
+-- to the game may throw. Entry points go through HSS.Try; a feature that fails
+-- MAX_FAILURES times switches itself off for the session.
+
+local MAX_FAILURES = 3
+local features = {}
+
+function HSS.GetFeatureState(name)
+    local state = features[name]
+    if not state then
+        state = { failures = 0, disabled = false, lastError = nil }
+        features[name] = state
+    end
+    return state
+end
+
+function HSS.FeatureEnabled(name)
+    return not HSS.GetFeatureState(name).disabled
+end
+
+-- Optional hook so the UI layer can tell the user a feature switched off.
+HSS.onFeatureDisabled = nil
+
+-- Calls fn(...) in protected mode. Returns ok, result (single result).
+-- Failures are counted against `feature` and never propagate.
+function HSS.Try(feature, fn, ...)
+    local state = HSS.GetFeatureState(feature)
+    if state.disabled then
+        return false
+    end
+
+    local ok, result = pcall(fn, ...)
+    if ok then
+        return true, result
+    end
+
+    state.failures = state.failures + 1
+    state.lastError = tostring(result)
+
+    if state.failures >= MAX_FAILURES then
+        state.disabled = true
+        if HSS.onFeatureDisabled then
+            pcall(HSS.onFeatureDisabled, feature, state.lastError)
+        end
+    end
+
+    return false
+end

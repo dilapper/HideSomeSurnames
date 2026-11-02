@@ -8,7 +8,7 @@ screen. This addon hides only the surnames you list; everyone else's surname
 stays visible. It is display-only: whispers, mail and invites still use the
 full name.
 
-> **Status: v0.1.0, written before WoW: Forever's launch and untested in-game.**
+> **Status: v0.2.0 (in development), written before WoW: Forever's launch and untested in-game.**
 > Expect a fix round once the client is available.
 
 ## Install
@@ -28,12 +28,17 @@ HSS.surnames = { "Mhmm" }
 
 Then `/reload`. An in-game editor is planned.
 
+To choose which chat channels are covered, edit `HSS.chatChannels` in the same file
+(`SAY`, `PARTY`, `GUILD`, `OFFICER`; set one to `false` to turn it off).
+
 ## Commands
 - `/hss` - show status and the hidden surname list
 - `/hss debug` - diagnostics (client build, hook status, target name before/after). Include this output in bug reports.
 
 ## Scope and limitations
-- v0.1 covers nameplates and unit/party/raid frames only. Chat, tooltips, /who and LFG still show full names.
+- Covers nameplates, unit/party/raid frames, and chat in **say, party, guild and guild officer**. Whispers, world/custom channels, yell, raid and instance chat (including dungeon-finder party chat) always show full names. Tooltips, /who and LFG are not covered.
+- Only the visible name in chat is shortened. The hidden link data keeps the full name, so clicking a name to whisper, invite etc. still works. Whispers are never modified.
+- If the addon can't hide a surname for any reason (unsupported API, restricted content), it shows the full name instead. If a feature errors repeatedly it switches itself off for the session and says so; it never throws Lua errors.
 - Third-party nameplate/unit-frame addons (Plater, ElvUI, ...) draw their own names and are not affected.
 
 ## Development

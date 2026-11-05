@@ -1,6 +1,6 @@
 local ADDON_NAME, HSS = ...
 
-local VERSION = "0.4.0"
+local VERSION = "0.4.1"
 local PREFIX = "|cff33ff99HideSomeSurnames|r "
 
 local IsSecret = HSS.IsSecret
@@ -73,7 +73,6 @@ end
 
 local function SafeUpdateFrameName(frame)
     HSS.Try("frames", UpdateFrameName, frame)
-    HSS.Try("frames", HSS.ShortenTitleRegions, frame)
 end
 
 local hookTargets = {
@@ -273,9 +272,7 @@ local function Debug()
 
     print("  -- pet titles --")
     print("  tooltip line types registered: " .. HSS.tooltipStats.lineTypes
-        .. " rewritten=" .. HSS.tooltipStats.rewritten)
-    print("  nameplate/frame scans: " .. HSS.titleStats.scanned
-        .. " rewritten=" .. HSS.titleStats.rewritten
+        .. " rewritten=" .. HSS.tooltipStats.rewritten
         .. "  (details: /hss debug titles)")
 
     print("  -- safety --")

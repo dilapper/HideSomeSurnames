@@ -21,6 +21,9 @@ local CHANNEL_EVENTS = {
 
 local CHANNEL_ORDER = { "SAY", "PARTY", "GUILD", "OFFICER" }
 
+-- The only channels that can ever be enabled, in display order.
+HSS.CHAT_CHANNELS = CHANNEL_ORDER
+
 -- Returns an ordered list of event names for the enabled channels.
 function HSS.ChatEventList(chatChannels)
     local list = {}
@@ -34,10 +37,14 @@ function HSS.ChatEventList(chatChannels)
     return list
 end
 
-local function ToSet(list)
-    local set = {}
-    for _, value in ipairs(list) do
-        set[value] = true
+-- Refills `set` (event name -> true) in place for the enabled channels, so a
+-- set already captured by the transformers stays current.
+function HSS.FillChatEventSet(set, chatChannels)
+    for key in pairs(set) do
+        set[key] = nil
+    end
+    for _, event in ipairs(HSS.ChatEventList(chatChannels)) do
+        set[event] = true
     end
     return set
 end
@@ -76,11 +83,11 @@ local function ShouldTransform(eventSet, message, _, _, _, _, _, _, event)
 end
 
 -- Builds the predicate/transform pair handed to TransformMessages.
--- Both are failure-proof: a predicate error means "leave the line alone", a
--- transform error returns the original line and arguments untouched.
-function HSS.MakeChatTransformers(eventList, surnameSet)
-    local eventSet = ToSet(eventList)
-
+-- `eventSet` and `surnameSet` are read live on every call, so editing them in
+-- place (see Settings.lua) takes effect immediately.
+-- Both functions are failure-proof: a predicate error means "leave the line
+-- alone", a transform error returns the original line and arguments untouched.
+function HSS.MakeChatTransformers(eventSet, surnameSet)
     local function predicate(...)
         local ok, result = HSS.Try("chat", ShouldTransform, eventSet, ...)
         return ok and result == true
@@ -159,9 +166,9 @@ local function RunPass()
     end)
 end
 
--- Call once at login with the configured events/surnames.
-function HSS.InitChat(eventList, surnameSet)
-    predicate, transform = HSS.MakeChatTransformers(eventList, surnameSet)
+-- Call once at login with the live event/surname sets.
+function HSS.InitChat(eventSet, surnameSet)
+    predicate, transform = HSS.MakeChatTransformers(eventSet, surnameSet)
 end
 
 -- Schedules one pass on the next tick (after Blizzard has finished rendering).

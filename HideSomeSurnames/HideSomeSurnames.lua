@@ -1,11 +1,13 @@
 local ADDON_NAME, HSS = ...
 
-local VERSION = "0.2.0"
+local VERSION = "0.3.0"
 local PREFIX = "|cff33ff99HideSomeSurnames|r "
 
 local IsSecret = HSS.IsSecret
-local surnameSet = HSS.BuildSurnameSet(HSS.surnames)
-local chatEvents = HSS.ChatEventList(HSS.chatChannels)
+
+-- Live sets owned by Settings.lua. They start empty (nothing is hidden) and are
+-- filled from the saved settings at ADDON_LOADED; edits update them in place.
+local surnameSet = HSS.surnameSet
 
 local function Print(msg)
     print(PREFIX .. msg)
@@ -16,8 +18,13 @@ end
 -- that keeps failing switches itself off (see Core.lua).
 
 HSS.onFeatureDisabled = function(feature)
-    Print("|cffff5555" .. feature .. " hiding switched off after repeated errors;|r "
-        .. "names are shown in full. Run /hss debug for details.")
+    if feature == "ui" then
+        Print("|cffff5555the settings panel switched off after repeated errors.|r "
+            .. "Use /hss add, /hss remove and /hss list instead.")
+    else
+        Print("|cffff5555" .. feature .. " hiding switched off after repeated errors;|r "
+            .. "names are shown in full. Run /hss debug for details.")
+    end
 end
 
 -- ============================================================
@@ -84,9 +91,63 @@ local function InstallHooks()
     end
 end
 
+-- After a settings change: hide newly added surnames on frames that are
+-- already on screen. Names that should be shown again come back the next time
+-- Blizzard refreshes that frame (we never call Blizzard's update functions
+-- ourselves). Best effort and failure-proof.
+local function RefreshVisibleFrames()
+    if C_NamePlate and type(C_NamePlate.GetNamePlates) == "function" then
+        for _, plate in ipairs(C_NamePlate.GetNamePlates() or {}) do
+            if plate and not (plate.IsForbidden and plate:IsForbidden()) then
+                SafeUpdateFrameName(plate.UnitFrame)
+            end
+        end
+    end
+
+    for _, frameName in ipairs({ "PlayerFrame", "TargetFrame", "FocusFrame",
+        "PartyMemberFrame1", "PartyMemberFrame2", "PartyMemberFrame3", "PartyMemberFrame4" }) do
+        SafeUpdateFrameName(_G[frameName])
+    end
+end
+
+HSS.onSettingsChanged = function()
+    HSS.ScheduleChatPass()
+    RefreshVisibleFrames()
+end
+
 -- ============================================================
 -- EVENTS
 -- ============================================================
+
+local events = CreateFrame("Frame")
+events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("PLAYER_LOGIN")
+events:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+-- Exactly the four channels that can ever be enabled (never whisper, instance,
+-- raid, ...). Which of them actually act is decided live by the event set.
+do
+    local all = {}
+    for _, channel in ipairs(HSS.CHAT_CHANNELS) do
+        all[channel] = true
+    end
+    for _, event in ipairs(HSS.ChatEventList(all)) do
+        events:RegisterEvent(event)
+    end
+end
+
+local function LoadSavedSettings()
+    local defaults = { surnames = HSS.surnames, chatChannels = HSS.chatChannels }
+    local saved = _G.HideSomeSurnamesDB
+
+    local ok, db = HSS.Try("startup", HSS.LoadSettings, saved, defaults)
+    if ok and type(db) == "table" then
+        _G.HideSomeSurnamesDB = db
+    else
+        -- Unusable saved data: run on the defaults for this session.
+        HSS.Try("startup", HSS.LoadSettings, nil, defaults)
+    end
+end
 
 local function OnLogin()
     InstallHooks()
@@ -104,29 +165,27 @@ local function OnLogin()
             .. ". Some names may not be shortened. Run /hss debug.")
     end
 
-    HSS.InitChat(chatEvents, surnameSet)
+    HSS.InitChat(HSS.chatEventSet, surnameSet)
 
-    if #chatEvents > 0 then
-        if HSS.HasChatTransformApi() then
-            HSS.ScheduleChatPass() -- chat history restored at login
-        else
-            Print("|cffff5555warning:|r chat API not found; chat names will be shown in full. "
-                .. "Run /hss debug.")
-        end
+    if HSS.HasChatTransformApi() then
+        HSS.ScheduleChatPass() -- chat history restored at login
+    else
+        Print("|cffff5555warning:|r chat API not found; chat names will be shown in full. "
+            .. "Run /hss debug.")
+    end
+
+    if not HSS.BuildOptions() then
+        Print("The settings panel isn't available on this client; "
+            .. "use /hss add, /hss remove and /hss list.")
     end
 end
 
-local events = CreateFrame("Frame")
-events:RegisterEvent("PLAYER_LOGIN")
-events:RegisterEvent("PLAYER_ENTERING_WORLD")
-
--- Only the channels enabled in Config.lua are ever registered.
-for _, event in ipairs(chatEvents) do
-    events:RegisterEvent(event)
-end
-
-events:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGIN" then
+events:SetScript("OnEvent", function(_, event, arg1)
+    if event == "ADDON_LOADED" then
+        if arg1 == ADDON_NAME then
+            LoadSavedSettings()
+        end
+    elseif event == "PLAYER_LOGIN" then
         HSS.Try("startup", OnLogin)
     elseif event == "PLAYER_ENTERING_WORLD" then
         HSS.Try("chat", HSS.ScheduleChatPass)
@@ -139,6 +198,26 @@ end)
 -- SLASH COMMANDS
 -- ============================================================
 
+local function Status()
+    Print("v" .. VERSION)
+
+    local list = HSS.GetSurnameList()
+    print("Hiding surname(s): " .. (#list > 0 and table.concat(list, ", ") or "(none)"))
+
+    local channels = {}
+    for _, channel in ipairs(HSS.CHAT_CHANNELS) do
+        if HSS.IsChannelEnabled(channel) then
+            channels[#channels + 1] = channel:lower()
+        end
+    end
+    print("In chat: " .. (#channels > 0 and table.concat(channels, ", ") or "(none)")
+        .. " (plus nameplates and unit frames)")
+
+    print("|cffffff00/hss config|r - open settings    |cffffff00/hss add <surname>|r    "
+        .. "|cffffff00/hss remove <surname>|r    |cffffff00/hss list|r    "
+        .. "|cffffff00/hss reset|r    |cffffff00/hss debug|r")
+end
+
 local function Debug()
     Print("v" .. VERSION .. " debug")
 
@@ -147,6 +226,8 @@ local function Debug()
         .. " interface " .. tostring(interface) .. " (TOC says 16001)")
 
     print("  issecretvalue available: " .. tostring(issecretvalue ~= nil))
+    print("  saved settings loaded: " .. tostring(HSS.db ~= nil))
+    print("  settings panel registered via: " .. tostring(HSS.ui and HSS.ui.api or "none"))
 
     print("  -- frames --")
     for _, funcName in ipairs(hookTargets) do
@@ -169,8 +250,12 @@ local function Debug()
 
     print("  -- chat --")
     local stats = HSS.chatStats
-    print("  events registered: "
-        .. (#chatEvents > 0 and table.concat(chatEvents, ", ") or "(none)"))
+    local active = {}
+    for event in pairs(HSS.chatEventSet) do
+        active[#active + 1] = event
+    end
+    table.sort(active)
+    print("  active events: " .. (#active > 0 and table.concat(active, ", ") or "(none)"))
     print("  TransformMessages + C_Timer available: " .. tostring(HSS.HasChatTransformApi()))
     print("  passes=" .. stats.passes .. " linesSeen=" .. stats.seen
         .. " rewritten=" .. stats.transformed
@@ -181,7 +266,7 @@ local function Debug()
     end
 
     print("  -- safety --")
-    for _, name in ipairs({ "frames", "chat", "startup" }) do
+    for _, name in ipairs({ "frames", "chat", "ui", "startup" }) do
         local state = HSS.GetFeatureState(name)
         print("  " .. name .. ": failures=" .. state.failures
             .. " disabled=" .. tostring(state.disabled)
@@ -190,28 +275,33 @@ local function Debug()
 end
 
 local function HandleSlash(msg)
-    msg = strtrim(msg or ""):lower()
+    msg = strtrim(msg or "")
+    local command, argument = msg:match("^(%S+)%s*(.-)$")
+    command = (command or ""):lower()
 
-    if msg == "debug" then
+    if command == "debug" then
         Debug()
-        return
-    end
-
-    Print("v" .. VERSION)
-    local list = {}
-    for _, surname in ipairs(HSS.surnames) do
-        list[#list + 1] = surname
-    end
-    print("Hiding surname(s): " .. (#list > 0 and table.concat(list, ", ") or "(none)"))
-    local channels = {}
-    for _, channel in ipairs({ "SAY", "PARTY", "GUILD", "OFFICER" }) do
-        if HSS.chatChannels and HSS.chatChannels[channel] then
-            channels[#channels + 1] = channel:lower()
+    elseif command == "config" or command == "options" then
+        if not HSS.OpenOptions() then
+            Print("The settings panel isn't available; use /hss add, /hss remove and /hss list.")
         end
+    elseif command == "add" then
+        local ok, result = HSS.AddSurname(argument)
+        Print(ok and ("now hiding the surname " .. result .. ".")
+            or ("|cffff5555couldn't add:|r " .. tostring(result) .. "."))
+    elseif command == "remove" then
+        local ok, result = HSS.RemoveSurname(argument)
+        Print(ok and ("no longer hiding " .. result .. ".")
+            or ("|cffff5555couldn't remove:|r " .. tostring(result) .. "."))
+    elseif command == "list" then
+        local list = HSS.GetSurnameList()
+        Print("hiding: " .. (#list > 0 and table.concat(list, ", ") or "(none)"))
+    elseif command == "reset" then
+        Print(HSS.ResetSettings() and "settings reset to the defaults in Config.lua."
+            or "settings aren't loaded yet.")
+    else
+        Status()
     end
-    print("In chat: " .. (#channels > 0 and table.concat(channels, ", ") or "(none)")
-        .. " (plus nameplates and unit frames)")
-    print("|cffffff00/hss debug|r - show diagnostics")
 end
 
 SLASH_HIDESOMESURNAMES1 = "/hss"

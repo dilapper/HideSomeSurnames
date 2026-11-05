@@ -502,6 +502,37 @@ expect("bracket: empty set hides nothing",
 expect("bracket: nil", bracket(nil), nil)
 expect("bracket: number", bracket(4), 4)
 
+-- the exact layout captured in game from the Guild & Communities pane
+local REAL_LINE = "[|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h"
+    .. "|cffaad372Lappy Mhmm|r|h]: |Kw131|k"
+expect("bracket (real pane line): brackets outside the link, colour-wrapped name",
+    bracket(REAL_LINE),
+    "[|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h"
+    .. "|cffaad372Lappy|r|h]: |Kw131|k")
+expect("bracket (real pane line): idempotent", bracket(bracket(REAL_LINE)), bracket(REAL_LINE))
+expect("bracket (real pane line): payload and trailing token untouched",
+    bracket(REAL_LINE):find("|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h", 1, true) ~= nil
+        and bracket(REAL_LINE):sub(-11) == "]: |Kw131|k", true)
+expect("bracket (real pane line): other surname untouched",
+    bracket("[|HplayerCommunity:Dave Smith:1:1:2:3|h|cffaad372Dave Smith|r|h]: hi"),
+    "[|HplayerCommunity:Dave Smith:1:1:2:3|h|cffaad372Dave Smith|r|h]: hi")
+expect("bracket: colour-wrapped name without brackets",
+    bracket("|Hplayer:Lappy Mhmm:1|h|cffaad372Lappy Mhmm|r|h: hi"),
+    "|Hplayer:Lappy Mhmm:1|h|cffaad372Lappy|r|h: hi")
+expect("bracket: uncoloured name without brackets",
+    bracket("[|Hplayer:Lappy Mhmm:1|hLappy Mhmm|h]: hi"), "[|Hplayer:Lappy Mhmm:1|hLappy|h]: hi")
+expect("bracket: brackets inside a colour-wrapped link",
+    bracket("|Hplayer:Lappy Mhmm:1|h|cffaad372[Lappy Mhmm]|r|h: hi"),
+    "|Hplayer:Lappy Mhmm:1|h|cffaad372[Lappy]|r|h: hi")
+expect("bracket: link text with other markup is left alone",
+    bracket("|Hplayer:Lappy Mhmm:1|h|cffaad372|TInterface\\Icons\\X:0|t Lappy Mhmm|r|h: hi"),
+    "|Hplayer:Lappy Mhmm:1|h|cffaad372|TInterface\\Icons\\X:0|t Lappy Mhmm|r|h: hi")
+expect("bracket: two real-format links, only the matching one changes",
+    bracket("[|HplayerCommunity:A Mhmm:1|h|cff111111A Mhmm|r|h] [|HplayerCommunity:B Smith:2|h|cff222222B Smith|r|h]"),
+    "[|HplayerCommunity:A Mhmm:1|h|cff111111A|r|h] [|HplayerCommunity:B Smith:2|h|cff222222B Smith|r|h]")
+expect("bracket: a non-name link is left alone",
+    bracket("|Hitem:1234:0|h[Cavalier's Boots]|h"), "|Hitem:1234:0|h[Cavalier's Boots]|h")
+
 -- ---------- Guild & Communities pane (stubbed client) ----------
 local function loadCommunities()
     local H = {}

@@ -139,8 +139,9 @@ local function ShouldTransform(message, ...)
     local stats = HSS.communitiesStats
     stats.predicateCalls = stats.predicateCalls + 1
 
+    -- Lines worth looking at contain a link or a "[" (the real lines have both).
     local bracketed = not IsSecret(message) and type(message) == "string"
-        and message:find("[", 1, true) ~= nil
+        and (message:find("|H", 1, true) ~= nil or message:find("[", 1, true) ~= nil)
     if bracketed then
         RecordSample(message, HSS.IsChannelEnabled("GUILD"), ...)
     else

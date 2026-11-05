@@ -86,26 +86,72 @@ function HSS.StripSurnameInLinks(message, surnameSet)
     return result
 end
 
--- Names shown as "[Forename Surname]" in a chat-like pane whose link type we
--- can't be sure of (the Guild & Communities window):
---   |H<any type>:<payload>|h[Lappy Mhmm]|h: hi   ->   ...|h[Lappy]|h: hi
--- Only the visible bracket text of a link is rewritten; the payload is never
--- touched. A plain, unlinked "[Name]:" is only handled at the very start of the
--- line (after colour codes), so a name typed later in a message is left alone.
+-- Rewrites the text of one link ("what's between |h and |h"). Handles an
+-- optional colour wrapper and optional square brackets inside the link text:
+--   |cffaad372Lappy Mhmm|r      ->  |cffaad372Lappy|r
+--   [Lappy Mhmm]                ->  [Lappy]
+--   |cffaad372[Lappy Mhmm]|r    ->  |cffaad372[Lappy]|r
+-- Anything with other markup inside is returned unchanged.
+local function StripSurnameInLinkText(visible, surnameSet)
+    local pos = 1
+    while true do
+        local _, colourEnd = visible:find("^|c%x%x%x%x%x%x%x%x", pos)
+        if not colourEnd then
+            break
+        end
+        pos = colourEnd + 1
+    end
+
+    local lead = visible:sub(1, pos - 1)
+    local core = visible:sub(pos)
+
+    local trail = ""
+    while core:sub(-2) == "|r" do
+        trail = "|r" .. trail
+        core = core:sub(1, -3)
+    end
+
+    local open, close = "", ""
+    if core:sub(1, 1) == "[" and core:sub(-1) == "]" then
+        open, close = "[", "]"
+        core = core:sub(2, -2)
+    end
+
+    if core == "" or core:find("|", 1, true) then
+        return visible
+    end
+
+    local short = HSS.StripSurname(core, surnameSet)
+    if short == core then
+        return visible
+    end
+
+    return lead .. open .. short .. close .. trail
+end
+
+-- Player names in a chat-like pane whose link type and layout we can't be sure
+-- of (the Guild & Communities window). In game its lines look like:
+--   [|HplayerCommunity:Lappy Mhmm:...|h|cffaad372Lappy Mhmm|r|h]: text
+-- i.e. the square brackets are OUTSIDE the link and the link text is a
+-- colour-wrapped name. Works for any link type and for brackets inside or
+-- outside the link. Only the visible link text is rewritten; the payload (what
+-- click-to-whisper reads) is never touched. A plain, unlinked "[Name]:" is only
+-- handled at the very start of the line (after colour codes), so a name typed
+-- later in a message is left alone.
 -- Idempotent; nil / non-string / secret input is returned unchanged.
 function HSS.StripSurnameInBracketNames(message, surnameSet)
     if IsSecret(message) or type(message) ~= "string" then
         return message
     end
 
-    if not message:find("[", 1, true) then
+    if not message:find("|H", 1, true) and not message:find("[", 1, true) then
         return message
     end
 
-    local result = message:gsub("(|H[^|]*|h)%[([^%]|]-)%]|h", function(openTag, inner)
-        local short = HSS.StripSurname(inner, surnameSet)
-        if short ~= inner then
-            return openTag .. "[" .. short .. "]|h"
+    local result = message:gsub("(|H[^|]*|h)(.-)|h", function(openTag, visible)
+        local rewritten = StripSurnameInLinkText(visible, surnameSet)
+        if rewritten ~= visible then
+            return openTag .. rewritten .. "|h"
         end
         return nil -- leave this link exactly as it was
     end)

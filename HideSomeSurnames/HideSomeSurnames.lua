@@ -35,7 +35,8 @@ end
 -- the unit's real name is never changed.
 
 local function UpdateFrameName(frame)
-    if not frame then
+    -- Nothing to hide: skip all the unit lookups (this runs on every frame update).
+    if not frame or next(surnameSet) == nil then
         return
     end
 
@@ -202,12 +203,10 @@ events:SetScript("OnEvent", function(_, event, arg1)
         end
     elseif event == "PLAYER_LOGIN" then
         HSS.Try("startup", OnLogin)
-    elseif event == "PLAYER_ENTERING_WORLD" then
-        HSS.Try("chat", HSS.ScheduleChatPass)
     elseif HSS.IsCommunitiesEvent(event) then
         HSS.ScheduleCommunitiesPass() -- already failure-proof
     else
-        HSS.ScheduleChatPass() -- already failure-proof
+        HSS.ScheduleChatPass() -- chat events and PLAYER_ENTERING_WORLD; already failure-proof
     end
 end)
 
@@ -228,7 +227,7 @@ local function Status()
         end
     end
     print("In chat: " .. (#channels > 0 and table.concat(channels, ", ") or "(none)")
-        .. " (plus nameplates and unit frames)")
+        .. " (plus nameplates, unit frames, pet titles in tooltips and the Guild & Communities chat pane)")
 
     print("|cffffff00/hss config|r - open settings    |cffffff00/hss add <surname>|r    "
         .. "|cffffff00/hss remove <surname>|r    |cffffff00/hss list|r    "
@@ -283,29 +282,19 @@ local function Debug()
     end
 
     print("  -- pet titles --")
-    print("  tooltip line types registered: " .. HSS.tooltipStats.lineTypes
+    print("  tooltip handler registered: " .. tostring(HSS.tooltipStats.registered)
         .. " rewritten=" .. HSS.tooltipStats.rewritten
         .. "  (details: /hss debug titles)")
 
     print("  -- guild & communities chat pane --")
     local cstats = HSS.communitiesStats
     print("  window message frame found: " .. tostring(cstats.found)
-        .. (cstats.path and (" via " .. cstats.path) or "")
         .. "  passes=" .. cstats.passes .. " rewritten=" .. cstats.rewritten
-        .. " windowHooked=" .. tostring(cstats.shownHooked))
+        .. " windowHooked=" .. tostring(cstats.shownHooked)
+        .. " addMessageHooked=" .. tostring(cstats.addMessageHooked))
     print("  events registered: "
         .. (#cstats.registered > 0 and table.concat(cstats.registered, ", ") or "(none)")
         .. (#cstats.failed > 0 and ("  rejected by client: " .. table.concat(cstats.failed, ", ")) or ""))
-    print("  linesSeen=" .. cstats.predicateCalls .. " withoutBracket=" .. cstats.noBracket
-        .. " addMessageHooked=" .. tostring(cstats.addMessageHooked))
-    if #cstats.samples == 0 then
-        print("  no bracketed lines seen yet (open the window with chat showing, then run this again)")
-    end
-    for _, sample in ipairs(cstats.samples) do
-        print("  line [accepted=" .. tostring(sample.accepted) .. " args=" .. sample.args .. "]: "
-            .. sample.text)
-    end
-    print("  (to inspect the pane: /hss debug under 3)")
 
     print("  -- safety --")
     for _, name in ipairs({ "frames", "chat", "tooltip", "communities", "ui", "startup" }) do
@@ -322,12 +311,8 @@ local function HandleSlash(msg)
     command = (command or ""):lower()
 
     if command == "debug" then
-        local sub, rest = argument:match("^(%S*)%s*(.-)$")
-        sub = (sub or ""):lower()
-        if sub == "titles" then
+        if argument:lower() == "titles" then
             HSS.DumpTitles(print)
-        elseif sub == "under" then
-            HSS.DumpUnderMouse(print, rest)
         else
             Debug()
         end

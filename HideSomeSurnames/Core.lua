@@ -9,9 +9,16 @@ end
 
 HSS.IsSecret = IsSecret
 
--- Turns { "Mhmm", "Other" } into a lowercase lookup set.
-function HSS.BuildSurnameSet(list)
-    local set = {}
+-- Turns { "Mhmm", "Other" } into a lowercase lookup set. With `into`, that table
+-- is cleared and refilled in place, so anything already holding it sees the
+-- change.
+function HSS.BuildSurnameSet(list, into)
+    local set = into or {}
+    if into then
+        for key in pairs(into) do
+            into[key] = nil
+        end
+    end
     for _, surname in ipairs(list or {}) do
         if type(surname) == "string" and surname ~= "" then
             set[surname:lower()] = true
@@ -86,97 +93,32 @@ function HSS.StripSurnameInLinks(message, surnameSet)
     return result
 end
 
--- Rewrites the text of one link ("what's between |h and |h"). Handles an
--- optional colour wrapper and optional square brackets inside the link text:
---   |cffaad372Lappy Mhmm|r      ->  |cffaad372Lappy|r
---   [Lappy Mhmm]                ->  [Lappy]
---   |cffaad372[Lappy Mhmm]|r    ->  |cffaad372[Lappy]|r
--- Anything with other markup inside is returned unchanged.
-local function StripSurnameInLinkText(visible, surnameSet)
-    local pos = 1
-    while true do
-        local _, colourEnd = visible:find("^|c%x%x%x%x%x%x%x%x", pos)
-        if not colourEnd then
-            break
-        end
-        pos = colourEnd + 1
-    end
-
-    local lead = visible:sub(1, pos - 1)
-    local core = visible:sub(pos)
-
-    local trail = ""
-    while core:sub(-2) == "|r" do
-        trail = "|r" .. trail
-        core = core:sub(1, -3)
-    end
-
-    local open, close = "", ""
-    if core:sub(1, 1) == "[" and core:sub(-1) == "]" then
-        open, close = "[", "]"
-        core = core:sub(2, -2)
-    end
-
-    if core == "" or core:find("|", 1, true) then
-        return visible
-    end
-
-    local short = HSS.StripSurname(core, surnameSet)
-    if short == core then
-        return visible
-    end
-
-    return lead .. open .. short .. close .. trail
-end
-
--- Player names in a chat-like pane whose link type and layout we can't be sure
--- of (the Guild & Communities window). In game its lines look like:
+-- Player names in the Guild & Communities chat pane. In game its lines look like:
 --   [|HplayerCommunity:Lappy Mhmm:...|h|cffaad372Lappy Mhmm|r|h]: text
--- i.e. the square brackets are OUTSIDE the link and the link text is a
--- colour-wrapped name. Works for any link type and for brackets inside or
--- outside the link. Only the visible link text is rewritten; the payload (what
--- click-to-whisper reads) is never touched. A plain, unlinked "[Name]:" is only
--- handled at the very start of the line (after colour codes), so a name typed
--- later in a message is left alone.
--- Idempotent; nil / non-string / secret input is returned unchanged.
-function HSS.StripSurnameInBracketNames(message, surnameSet)
-    if IsSecret(message) or type(message) ~= "string" then
-        return message
-    end
-
-    if not message:find("|H", 1, true) and not message:find("[", 1, true) then
+-- i.e. the link text is a colour-wrapped name. Only that visible link text is
+-- rewritten (any link type); the payload (what click-to-whisper reads) is never
+-- touched, and names typed inside a message are left alone. Idempotent; nil /
+-- non-string / secret input is returned unchanged.
+function HSS.StripSurnameInCommunityLinks(message, surnameSet)
+    if IsSecret(message) or type(message) ~= "string" or not message:find("|H", 1, true) then
         return message
     end
 
     local result = message:gsub("(|H[^|]*|h)(.-)|h", function(openTag, visible)
-        local rewritten = StripSurnameInLinkText(visible, surnameSet)
-        if rewritten ~= visible then
-            return openTag .. rewritten .. "|h"
+        local colour, name, reset = visible:match("^(|c%x%x%x%x%x%x%x%x)([^|]+)(|r)$")
+        if not colour then
+            colour, name, reset = "", visible:match("^([^|]+)$"), ""
         end
-        return nil -- leave this link exactly as it was
-    end)
-
-    -- Plain "[Name]:" at the start of the line, after any colour codes.
-    local pos = 1
-    while true do
-        local _, colourEnd = result:find("^|c%x%x%x%x%x%x%x%x", pos)
-        if not colourEnd then
-            break
+        if not name then
+            return nil -- other markup inside the link: leave it exactly as it was
         end
-        pos = colourEnd + 1
-    end
 
-    local name, after = result:match("^%[([^%]|]+)%]()", pos)
-    local tail = after
-    if tail and result:sub(tail, tail + 1) == "|r" then
-        tail = tail + 2 -- colour reset before the colon
-    end
-    if name and result:sub(tail, tail) == ":" then
         local short = HSS.StripSurname(name, surnameSet)
-        if short ~= name then
-            result = result:sub(1, pos - 1) .. "[" .. short .. "]" .. result:sub(after)
+        if short == name then
+            return nil
         end
-    end
+        return openTag .. colour .. short .. reset .. "|h"
+    end)
 
     return result
 end

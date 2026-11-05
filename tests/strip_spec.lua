@@ -276,12 +276,10 @@ local function makeFakeFrame(created, kind, name)
 end
 
 local function withClient(setup, fn)
-    local saved = { CreateFrame = _G.CreateFrame, Settings = _G.Settings,
-        InterfaceOptions_AddCategory = _G.InterfaceOptions_AddCategory,
-        InterfaceOptionsFrame_OpenToCategory = _G.InterfaceOptionsFrame_OpenToCategory }
+    local saved = { CreateFrame = _G.CreateFrame, Settings = _G.Settings }
     local created = {}
     _G.CreateFrame = function(kind, name) return makeFakeFrame(created, kind, name) end
-    _G.Settings, _G.InterfaceOptions_AddCategory, _G.InterfaceOptionsFrame_OpenToCategory = nil, nil, nil
+    _G.Settings = nil
     setup(created)
     local ok, err = pcall(fn, created)
     for key, value in pairs(saved) do _G[key] = value end
@@ -320,18 +318,6 @@ end, function(created)
     local okBad = pcall(input._scripts.OnEnterPressed, input)
     expect("panel: invalid input does not throw", okBad, true)
     expect("panel: invalid input not added", U.surnameSet["bad name"], nil)
-end)
-
-withClient(function(created)
-    _G.InterfaceOptions_AddCategory = function(panel) created.added = panel end
-    _G.InterfaceOptionsFrame_OpenToCategory = function(panel) created.openCalls = (created.openCalls or 0) + 1 end
-end, function(created)
-    local U = loadAll()
-    U.LoadSettings(nil, DEFAULTS)
-    expect("panel (InterfaceOptions): builds", U.BuildOptions(), true)
-    expect("panel (InterfaceOptions): api recorded", U.ui.api, "InterfaceOptions")
-    expect("panel (InterfaceOptions): panel registered", created.added ~= nil, true)
-    expect("panel (InterfaceOptions): opens", U.OpenOptions(), true)
 end)
 
 withClient(function() end, function()
@@ -400,7 +386,7 @@ do
     withGlobals({ TooltipDataProcessor = fakeProcessor, Enum = fakeEnum,
         issecretvalue = function(v) return v == "SECRET" end }, function()
         expect("tooltip: installs", T.InstallTooltipHook(), true)
-        expect("tooltip: registers for UnitOwner only", T.tooltipStats.lineTypes, 1)
+        expect("tooltip: registers for UnitOwner only", T.tooltipStats.registered, true)
         expect("tooltip: nothing registered for other line types",
             handlers[0] == nil and handlers[2] == nil and handlers[7] ~= nil, true)
         expect("tooltip: second install is a no-op", T.InstallTooltipHook(), true)
@@ -444,18 +430,15 @@ do
         expect("tooltip: breaker trips after 3 failures", T.FeatureEnabled("tooltip"), false)
     end)
 
-    -- a client without a UnitOwner line type: fall back to every numeric type
+    -- a client without a UnitOwner line type: nothing registered, no error
     local T3 = loadTitleModules()
-    local fallbackHandlers = {}
+    local registeredAny = false
     withGlobals({
-        TooltipDataProcessor = { AddLinePreCall = function(lineType, fn) fallbackHandlers[lineType] = fn end },
-        Enum = { TooltipDataLineType = { None = 0, UnitName = 2, Other = 5 } },
+        TooltipDataProcessor = { AddLinePreCall = function() registeredAny = true end },
+        Enum = { TooltipDataLineType = { None = 0, UnitName = 2 } },
     }, function()
-        expect("tooltip fallback: installs", T3.InstallTooltipHook(), true)
-        expect("tooltip fallback: registers for every numeric line type", T3.tooltipStats.lineTypes, 3)
-        local line = { leftText = "<Lappy Mhmm's Pet>" }
-        fallbackHandlers[5](nil, line)
-        expect("tooltip fallback: still rewrites", line.leftText, "<Lappy's Pet>")
+        expect("tooltip (no UnitOwner type): reports unavailable", T3.InstallTooltipHook(), false)
+        expect("tooltip (no UnitOwner type): registers nothing", registeredAny, false)
     end)
 
     local T2 = loadTitleModules()
@@ -464,74 +447,43 @@ do
     end)
 end
 
--- ---------- bracketed names (Guild & Communities chat pane) ----------
-local function bracket(text) return HSS.StripSurnameInBracketNames(text, set) end
-
-expect("bracket: player link",
-    bracket("|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h: hello"),
-    "|Hplayer:Lappy Mhmm:1|h[Lappy]|h: hello")
-expect("bracket: other link type",
-    bracket("|HcommunityPlayer:Lappy Mhmm:123|h[Lappy Mhmm]|h: hi"),
-    "|HcommunityPlayer:Lappy Mhmm:123|h[Lappy]|h: hi")
-expect("bracket: colour-wrapped link",
-    bracket("|cff00ff00|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h|r: hi"),
-    "|cff00ff00|Hplayer:Lappy Mhmm:1|h[Lappy]|h|r: hi")
-expect("bracket: plain line start", bracket("[Lappy Mhmm]: hello"), "[Lappy]: hello")
-expect("bracket: plain after colour code", bracket("|cff00ff00[Lappy Mhmm]: hello|r"), "|cff00ff00[Lappy]: hello|r")
-expect("bracket: plain with colour reset before colon", bracket("|cff00ff00[Lappy Mhmm]|r: hi"),
-    "|cff00ff00[Lappy]|r: hi")
-expect("bracket: other surname untouched", bracket("[Dave Smith]: hello"), "[Dave Smith]: hello")
-expect("bracket: link, other surname untouched",
-    bracket("|Hplayer:Dave Smith:1|h[Dave Smith]|h: hello"), "|Hplayer:Dave Smith:1|h[Dave Smith]|h: hello")
-expect("bracket: name later in the body untouched",
-    bracket("hello [Lappy Mhmm]: hi"), "hello [Lappy Mhmm]: hi")
-expect("bracket: plain name in body untouched after a link",
-    bracket("|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h: see [Dave Mhmm]: ok"),
-    "|Hplayer:Lappy Mhmm:1|h[Lappy]|h: see [Dave Mhmm]: ok")
-expect("bracket: plain bracket without colon untouched", bracket("[Lappy Mhmm] hello"), "[Lappy Mhmm] hello")
-expect("bracket: several links",
-    bracket("|Hplayer:A Mhmm:1|h[A Mhmm]|h and |Hplayer:B Smith:2|h[B Smith]|h"),
-    "|Hplayer:A Mhmm:1|h[A]|h and |Hplayer:B Smith:2|h[B Smith]|h")
-expect("bracket: idempotent",
-    bracket(bracket("|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h: hello")),
-    "|Hplayer:Lappy Mhmm:1|h[Lappy]|h: hello")
-expect("bracket: idempotent (plain)", bracket(bracket("[Lappy Mhmm]: hello")), "[Lappy]: hello")
-expect("bracket: no brackets", bracket("just text"), "just text")
-expect("bracket: empty set hides nothing",
-    HSS.StripSurnameInBracketNames("[Lappy Mhmm]: hi", HSS.BuildSurnameSet({})), "[Lappy Mhmm]: hi")
-expect("bracket: nil", bracket(nil), nil)
-expect("bracket: number", bracket(4), 4)
-
--- the exact layout captured in game from the Guild & Communities pane
-local REAL_LINE = "[|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h"
+-- ---------- player names in the Guild & Communities chat pane ----------
+-- the exact layout captured in game: brackets outside the link, colour-wrapped name
+local PANE_LINE = "[|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h"
     .. "|cffaad372Lappy Mhmm|r|h]: |Kw131|k"
-expect("bracket (real pane line): brackets outside the link, colour-wrapped name",
-    bracket(REAL_LINE),
-    "[|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h"
-    .. "|cffaad372Lappy|r|h]: |Kw131|k")
-expect("bracket (real pane line): idempotent", bracket(bracket(REAL_LINE)), bracket(REAL_LINE))
-expect("bracket (real pane line): payload and trailing token untouched",
-    bracket(REAL_LINE):find("|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h", 1, true) ~= nil
-        and bracket(REAL_LINE):sub(-11) == "]: |Kw131|k", true)
-expect("bracket (real pane line): other surname untouched",
-    bracket("[|HplayerCommunity:Dave Smith:1:1:2:3|h|cffaad372Dave Smith|r|h]: hi"),
+local PANE_LINE_SHORT = "[|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h"
+    .. "|cffaad372Lappy|r|h]: |Kw131|k"
+
+local function community(text) return HSS.StripSurnameInCommunityLinks(text, set) end
+
+expect("community link: real pane line", community(PANE_LINE), PANE_LINE_SHORT)
+expect("community link: idempotent", community(community(PANE_LINE)), PANE_LINE_SHORT)
+expect("community link: payload and trailing token untouched",
+    community(PANE_LINE):find("|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h", 1, true) ~= nil
+        and community(PANE_LINE):sub(-11) == "]: |Kw131|k", true)
+expect("community link: other surname untouched",
+    community("[|HplayerCommunity:Dave Smith:1:1:2:3|h|cffaad372Dave Smith|r|h]: hi"),
     "[|HplayerCommunity:Dave Smith:1:1:2:3|h|cffaad372Dave Smith|r|h]: hi")
-expect("bracket: colour-wrapped name without brackets",
-    bracket("|Hplayer:Lappy Mhmm:1|h|cffaad372Lappy Mhmm|r|h: hi"),
+expect("community link: any link type", community("|Hplayer:Lappy Mhmm:1|h|cffaad372Lappy Mhmm|r|h: hi"),
     "|Hplayer:Lappy Mhmm:1|h|cffaad372Lappy|r|h: hi")
-expect("bracket: uncoloured name without brackets",
-    bracket("[|Hplayer:Lappy Mhmm:1|hLappy Mhmm|h]: hi"), "[|Hplayer:Lappy Mhmm:1|hLappy|h]: hi")
-expect("bracket: brackets inside a colour-wrapped link",
-    bracket("|Hplayer:Lappy Mhmm:1|h|cffaad372[Lappy Mhmm]|r|h: hi"),
-    "|Hplayer:Lappy Mhmm:1|h|cffaad372[Lappy]|r|h: hi")
-expect("bracket: link text with other markup is left alone",
-    bracket("|Hplayer:Lappy Mhmm:1|h|cffaad372|TInterface\\Icons\\X:0|t Lappy Mhmm|r|h: hi"),
+expect("community link: uncoloured link text", community("[|Hplayer:Lappy Mhmm:1|hLappy Mhmm|h]: hi"),
+    "[|Hplayer:Lappy Mhmm:1|hLappy|h]: hi")
+expect("community link: link text with other markup is left alone",
+    community("|Hplayer:Lappy Mhmm:1|h|cffaad372|TInterface\\Icons\\X:0|t Lappy Mhmm|r|h: hi"),
     "|Hplayer:Lappy Mhmm:1|h|cffaad372|TInterface\\Icons\\X:0|t Lappy Mhmm|r|h: hi")
-expect("bracket: two real-format links, only the matching one changes",
-    bracket("[|HplayerCommunity:A Mhmm:1|h|cff111111A Mhmm|r|h] [|HplayerCommunity:B Smith:2|h|cff222222B Smith|r|h]"),
+expect("community link: two links, only the matching one changes",
+    community("[|HplayerCommunity:A Mhmm:1|h|cff111111A Mhmm|r|h] [|HplayerCommunity:B Smith:2|h|cff222222B Smith|r|h]"),
     "[|HplayerCommunity:A Mhmm:1|h|cff111111A|r|h] [|HplayerCommunity:B Smith:2|h|cff222222B Smith|r|h]")
-expect("bracket: a non-name link is left alone",
-    bracket("|Hitem:1234:0|h[Cavalier's Boots]|h"), "|Hitem:1234:0|h[Cavalier's Boots]|h")
+expect("community link: a non-name link is left alone",
+    community("|Hitem:1234:0|h[Cavalier's Boots]|h"), "|Hitem:1234:0|h[Cavalier's Boots]|h")
+expect("community link: a name typed in the message is left alone",
+    community("[|HplayerCommunity:A Mhmm:1|h|cff111111A Mhmm|r|h]: hi Dave Mhmm and [Dave Mhmm]"),
+    "[|HplayerCommunity:A Mhmm:1|h|cff111111A|r|h]: hi Dave Mhmm and [Dave Mhmm]")
+expect("community link: no link at all", community("[Lappy Mhmm]: hello"), "[Lappy Mhmm]: hello")
+expect("community link: empty set hides nothing",
+    HSS.StripSurnameInCommunityLinks(PANE_LINE, HSS.BuildSurnameSet({})), PANE_LINE)
+expect("community link: nil", community(nil), nil)
+expect("community link: number", community(4), 4)
 
 -- ---------- Guild & Communities pane (stubbed client) ----------
 local function loadCommunities()
@@ -555,60 +507,37 @@ end
 local immediateTimer = { After = function(_, fn) fn() end }
 
 do
-    -- found at the likely path
+    -- found at the real path
     local C = loadCommunities()
     local record = {}
     withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame(record) } },
         C_Timer = immediateTimer }, function()
         C.ScheduleCommunitiesPass()
-        expect("communities: message frame found at the likely path", C.communitiesStats.path,
-            "CommunitiesFrame.Chat.MessageFrame")
+        expect("communities: message frame found", C.communitiesStats.found, true)
         expect("communities: TransformMessages called once", record.calls, 1)
 
-        expect("communities: predicate accepts a name line", record.predicate("[Lappy Mhmm]: hi"), true)
-        expect("communities: predicate rejects a line without brackets", record.predicate("hello"), false)
+        expect("communities: predicate accepts a name line", record.predicate(PANE_LINE), true)
+        expect("communities: predicate rejects a line without a link", record.predicate("hello"), false)
         expect("communities: predicate rejects nil", record.predicate(nil), false)
-        local out, r, extra = record.transform("[Lappy Mhmm]: hi", 0.5, "EXTRA")
-        expect("communities: transform rewrites the name", out, "[Lappy]: hi")
+        local out, r, extra = record.transform(PANE_LINE, 0.5, "EXTRA")
+        expect("communities: transform rewrites the name", out, PANE_LINE_SHORT)
         expect("communities: transform keeps other args", tostring(r) .. tostring(extra), "0.5EXTRA")
         expect("communities: rewrite counted", C.communitiesStats.rewritten, 1)
 
         C.SetChannel("GUILD", false)
-        expect("communities: Guild checkbox off -> predicate rejects", record.predicate("[Lappy Mhmm]: hi"), false)
+        expect("communities: Guild checkbox off -> predicate rejects", record.predicate(PANE_LINE), false)
         C.SetChannel("GUILD", true)
-        expect("communities: Guild checkbox on again", record.predicate("[Lappy Mhmm]: hi"), true)
+        expect("communities: Guild checkbox on again", record.predicate(PANE_LINE), true)
 
         -- a failing stripper never reaches the game and trips the breaker at 3
-        C.StripSurnameInBracketNames = function() error("boom") end
+        C.StripSurnameInCommunityLinks = function() error("boom") end
         local last
-        for _ = 1, 4 do last = record.transform("[Lappy Mhmm]: hi") end
-        expect("communities: failing stripper returns the original line", last, "[Lappy Mhmm]: hi")
+        for _ = 1, 4 do last = record.transform(PANE_LINE) end
+        expect("communities: failing stripper returns the original line", last, PANE_LINE)
         expect("communities: breaker trips after 3 failures", C.FeatureEnabled("communities"), false)
         local before = record.calls
         C.ScheduleCommunitiesPass()
         expect("communities: disabled feature does no more passes", record.calls, before)
-    end)
-
-    -- found by searching the Chat subtree
-    local D = loadCommunities()
-    local recordD = {}
-    local grandchild = fakeMessageFrame(recordD)
-    local child = { GetChildren = function() return grandchild end }
-    withGlobals({ CommunitiesFrame = { Chat = { GetChildren = function() return child end } },
-        C_Timer = immediateTimer }, function()
-        D.ScheduleCommunitiesPass()
-        expect("communities: found by subtree search", D.communitiesStats.found, true)
-        expect("communities: search path recorded", D.communitiesStats.path:find("child", 1, true) ~= nil, true)
-        expect("communities: search result got the transform", recordD.calls, 1)
-    end)
-
-    -- found by field name inside Chat
-    local D2 = loadCommunities()
-    local recordD2 = {}
-    withGlobals({ CommunitiesFrame = { Chat = { Messages = fakeMessageFrame(recordD2) } },
-        C_Timer = immediateTimer }, function()
-        D2.ScheduleCommunitiesPass()
-        expect("communities: found by field search", D2.communitiesStats.path, "CommunitiesFrame.Chat.Messages")
     end)
 
     -- not available: no window, a frame without TransformMessages, a forbidden window
@@ -629,7 +558,7 @@ do
     local F = loadCommunities()
     withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame({}) } }, C_Timer = false }, function()
         expect("communities (no timer): does not throw", pcall(F.ScheduleCommunitiesPass), true)
-        expect("communities (no timer): recorded", F.communitiesStats.noScheduler, true)
+        expect("communities (no timer): no pass runs", F.communitiesStats.passes, 0)
     end)
 
     -- event registration: a rejected name must not throw or trip the breaker
@@ -683,28 +612,6 @@ do
         expect("communities: can schedule again after it ran", #delays, 3)
     end)
 
-    -- diagnostics: raw lines are recorded, escaped, with their argument types
-    local L = loadCommunities()
-    local recordL = {}
-    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame(recordL) } },
-        C_Timer = immediateTimer, issecretvalue = function(v) return v == "SECRET" end }, function()
-        L.ScheduleCommunitiesPass()
-        recordL.predicate("|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h: hi", 1, 0.5, "x")
-        recordL.predicate("no brackets here")
-        recordL.predicate("SECRET")
-        recordL.predicate(nil)
-        local stats = L.communitiesStats
-        expect("diag: lines counted", stats.predicateCalls, 4)
-        expect("diag: lines without a bracket counted", stats.noBracket, 3)
-        expect("diag: bracketed line sampled", #stats.samples, 1)
-        expect("diag: sample is escaped so link codes are visible",
-            stats.samples[1].text, "||Hplayer:Lappy Mhmm:1||h[Lappy Mhmm]||h: hi")
-        expect("diag: argument types recorded", stats.samples[1].args, "string,number,number,string")
-        expect("diag: accepted flag recorded", stats.samples[1].accepted, true)
-        for i = 1, 10 do recordL.predicate("[Name " .. i .. "]: x") end
-        expect("diag: samples are capped", #stats.samples, 6)
-    end)
-
     -- hooking AddMessage: new lines trigger a pass, our own pass cannot loop
     local M = loadCommunities()
     local hookCount = 0
@@ -739,25 +646,6 @@ do
         C_Timer = immediateTimer, hooksecurefunc = function() error("no such method") end }, function()
         local N = loadCommunities()
         expect("addmessage: a failing hook does not throw", pcall(N.ScheduleCommunitiesPass), true)
-    end)
-
-    -- /hss debug under
-    local J = loadCommunities()
-    local focus = { GetObjectType = function() return "Frame" end, GetName = function() return "SomeFrame" end,
-        GetParent = function() return nil end, TransformMessages = function() end }
-    local dumped = {}
-    withGlobals({ GetMouseFoci = function() return { focus } end, C_Timer = immediateTimer,
-        CommunitiesFrame = false }, function()
-        J.DumpUnderMouse(function(line) dumped[#dumped + 1] = line end, "2")
-        local text = table.concat(dumped, "\n")
-        expect("under: reports the frame under the mouse", text:find("SomeFrame", 1, true) ~= nil, true)
-        expect("under: reports TransformMessages", text:find("TransformMessages=true", 1, true) ~= nil, true)
-    end)
-    local noApi = {}
-    withGlobals({ GetMouseFoci = false, GetMouseFocus = false, C_Timer = immediateTimer }, function()
-        expect("under: no mouse API does not throw",
-            pcall(J.DumpUnderMouse, function(line) noApi[#noApi + 1] = line end, 1), true)
-        expect("under: no mouse API is reported", table.concat(noApi, "\n"):find("nothing found", 1, true) ~= nil, true)
     end)
 end
 

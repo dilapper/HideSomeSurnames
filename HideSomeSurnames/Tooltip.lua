@@ -12,27 +12,21 @@ local IsSecret = HSS.IsSecret
 local RECENT_MAX = 6
 
 HSS.tooltipStats = {
-    lineTypes = 0,     -- how many line types we registered for
-    rewritten = 0,     -- title lines actually rewritten
-    recent = {},       -- recent possessive-looking lines, for /hss debug titles
+    registered = false, -- handler installed on the UnitOwner line
+    rewritten = 0,      -- title lines actually rewritten
+    recent = {},        -- recent possessive-looking lines, for /hss debug titles
 }
 
-local lineTypeNames = {}
-
-local function Remember(lineType, before, after)
+local function Remember(before, after)
     local recent = HSS.tooltipStats.recent
-    recent[#recent + 1] = {
-        lineType = lineTypeNames[lineType] or tostring(lineType),
-        before = before,
-        after = after,
-    }
+    recent[#recent + 1] = { before = before, after = after }
     if #recent > RECENT_MAX then
         table.remove(recent, 1)
     end
 end
 
--- Handles one tooltip line. `lineData` is the table Blizzard is about to show.
-local function RewriteLine(lineType, lineData)
+-- Handles the owner-title line. `lineData` is the table Blizzard is about to show.
+local function RewriteLine(lineData)
     if type(lineData) ~= "table" then
         return
     end
@@ -43,7 +37,7 @@ local function RewriteLine(lineType, lineData)
     end
 
     local result = HSS.StripSurnameInTitle(text, HSS.surnameSet)
-    Remember(lineType, text, result ~= text and result or nil)
+    Remember(text, result ~= text and result or nil)
 
     if result ~= text then
         lineData.leftText = result
@@ -51,53 +45,30 @@ local function RewriteLine(lineType, lineData)
     end
 end
 
-local installed = false
-
 -- Returns true if the handler is registered. Never throws.
 function HSS.InstallTooltipHook()
-    if installed then
+    local stats = HSS.tooltipStats
+    if stats.registered then
         return true
     end
 
+    -- The owner title ("<Lappy Mhmm's Pet>") is its own UnitOwner line.
     if type(TooltipDataProcessor) ~= "table"
         or type(TooltipDataProcessor.AddLinePreCall) ~= "function"
         or type(Enum) ~= "table"
         or type(Enum.TooltipDataLineType) ~= "table"
+        or type(Enum.TooltipDataLineType.UnitOwner) ~= "number"
     then
         return false
     end
 
-    -- Confirmed in game: the owner title ("<Lappy Mhmm's Pet>") is its own
-    -- UnitOwner line. If this client has no such line type, fall back to
-    -- checking every line type (matching is by text, so that still works).
-    local wanted = {}
-    local ownerType = Enum.TooltipDataLineType.UnitOwner
-    if type(ownerType) == "number" then
-        wanted[#wanted + 1] = { name = "UnitOwner", lineType = ownerType }
-    else
-        for name, lineType in pairs(Enum.TooltipDataLineType) do
-            if type(lineType) == "number" then
-                wanted[#wanted + 1] = { name = name, lineType = lineType }
-            end
-        end
-    end
+    stats.registered = HSS.Try("tooltip", TooltipDataProcessor.AddLinePreCall,
+        Enum.TooltipDataLineType.UnitOwner,
+        function(_, lineData)
+            HSS.Try("tooltip", RewriteLine, lineData)
+        end)
 
-    local count = 0
-    for _, entry in ipairs(wanted) do
-        local lineType = entry.lineType
-        lineTypeNames[lineType] = entry.name
-        local ok = HSS.Try("tooltip", TooltipDataProcessor.AddLinePreCall, lineType,
-            function(_, lineData)
-                HSS.Try("tooltip", RewriteLine, lineType, lineData)
-            end)
-        if ok then
-            count = count + 1
-        end
-    end
-
-    HSS.tooltipStats.lineTypes = count
-    installed = count > 0
-    return installed
+    return stats.registered
 end
 
 -- /hss debug titles: what the tooltip handler has seen. `out` is a print
@@ -107,13 +78,12 @@ function HSS.DumpTitles(out)
     out("titles debug")
 
     local tooltip = HSS.tooltipStats
-    out("  tooltip: registered for " .. tooltip.lineTypes .. " line type(s), rewritten="
-        .. tooltip.rewritten)
+    out("  tooltip: registered=" .. tostring(tooltip.registered) .. " rewritten=" .. tooltip.rewritten)
     if #tooltip.recent == 0 then
         out("  tooltip: no possessive-looking lines seen yet (hover a pet, then run this again)")
     end
     for _, entry in ipairs(tooltip.recent) do
-        out(("  tooltip line [%s]: '%s' -> %s"):format(entry.lineType, tostring(entry.before),
+        out(("  tooltip line: '%s' -> %s"):format(tostring(entry.before),
             entry.after and ("'" .. entry.after .. "'") or "(unchanged)"))
     end
 end

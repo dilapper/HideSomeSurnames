@@ -8,3 +8,13 @@ local _, HSS = ...
 HSS.surnames = {
     "Mhmm",
 }
+
+-- Chat channels in which those surnames are hidden. Whispers, world/custom
+-- channels, yell, raid and instance chat always show full names.
+-- PARTY includes party leader messages.
+HSS.chatChannels = {
+    SAY     = true,
+    PARTY   = true,
+    GUILD   = true,
+    OFFICER = true,
+}

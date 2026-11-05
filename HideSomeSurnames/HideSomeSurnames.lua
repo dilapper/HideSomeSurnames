@@ -1,6 +1,6 @@
 local ADDON_NAME, HSS = ...
 
-local VERSION = "0.4.1"
+local VERSION = "0.5.0"
 local PREFIX = "|cff33ff99HideSomeSurnames|r "
 
 local IsSecret = HSS.IsSecret
@@ -112,6 +112,7 @@ end
 
 HSS.onSettingsChanged = function()
     HSS.ScheduleChatPass()
+    HSS.ScheduleCommunitiesPass()
     RefreshVisibleFrames()
 end
 
@@ -135,6 +136,10 @@ do
         events:RegisterEvent(event)
     end
 end
+
+-- Guild & Communities window chat: each event is registered separately because
+-- an unknown event name raises an error (see Communities.lua).
+HSS.RegisterCommunitiesEvents(events)
 
 local function LoadSavedSettings()
     local defaults = { surnames = HSS.surnames, chatChannels = HSS.chatChannels }
@@ -183,17 +188,24 @@ local function OnLogin()
         Print("The settings panel isn't available on this client; "
             .. "use /hss add, /hss remove and /hss list.")
     end
+
+    -- The Communities window may already exist, or load later (see ADDON_LOADED).
+    HSS.Try("communities", HSS.HookCommunitiesWindow)
 end
 
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 == ADDON_NAME then
             LoadSavedSettings()
+        elseif arg1 == "Blizzard_Communities" then
+            HSS.Try("communities", HSS.HookCommunitiesWindow)
         end
     elseif event == "PLAYER_LOGIN" then
         HSS.Try("startup", OnLogin)
     elseif event == "PLAYER_ENTERING_WORLD" then
         HSS.Try("chat", HSS.ScheduleChatPass)
+    elseif HSS.IsCommunitiesEvent(event) then
+        HSS.ScheduleCommunitiesPass() -- already failure-proof
     else
         HSS.ScheduleChatPass() -- already failure-proof
     end
@@ -275,8 +287,19 @@ local function Debug()
         .. " rewritten=" .. HSS.tooltipStats.rewritten
         .. "  (details: /hss debug titles)")
 
+    print("  -- guild & communities chat pane --")
+    local cstats = HSS.communitiesStats
+    print("  window message frame found: " .. tostring(cstats.found)
+        .. (cstats.path and (" via " .. cstats.path) or "")
+        .. "  passes=" .. cstats.passes .. " rewritten=" .. cstats.rewritten
+        .. " windowHooked=" .. tostring(cstats.shownHooked))
+    print("  events registered: "
+        .. (#cstats.registered > 0 and table.concat(cstats.registered, ", ") or "(none)")
+        .. (#cstats.failed > 0 and ("  rejected by client: " .. table.concat(cstats.failed, ", ")) or ""))
+    print("  (open the window, then run this again; to inspect the pane: /hss debug under 3)")
+
     print("  -- safety --")
-    for _, name in ipairs({ "frames", "chat", "tooltip", "ui", "startup" }) do
+    for _, name in ipairs({ "frames", "chat", "tooltip", "communities", "ui", "startup" }) do
         local state = HSS.GetFeatureState(name)
         print("  " .. name .. ": failures=" .. state.failures
             .. " disabled=" .. tostring(state.disabled)
@@ -290,8 +313,12 @@ local function HandleSlash(msg)
     command = (command or ""):lower()
 
     if command == "debug" then
-        if argument:lower() == "titles" then
+        local sub, rest = argument:match("^(%S*)%s*(.-)$")
+        sub = (sub or ""):lower()
+        if sub == "titles" then
             HSS.DumpTitles(print)
+        elseif sub == "under" then
+            HSS.DumpUnderMouse(print, rest)
         else
             Debug()
         end

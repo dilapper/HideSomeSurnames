@@ -464,6 +464,200 @@ do
     end)
 end
 
+-- ---------- bracketed names (Guild & Communities chat pane) ----------
+local function bracket(text) return HSS.StripSurnameInBracketNames(text, set) end
+
+expect("bracket: player link",
+    bracket("|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h: hello"),
+    "|Hplayer:Lappy Mhmm:1|h[Lappy]|h: hello")
+expect("bracket: other link type",
+    bracket("|HcommunityPlayer:Lappy Mhmm:123|h[Lappy Mhmm]|h: hi"),
+    "|HcommunityPlayer:Lappy Mhmm:123|h[Lappy]|h: hi")
+expect("bracket: colour-wrapped link",
+    bracket("|cff00ff00|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h|r: hi"),
+    "|cff00ff00|Hplayer:Lappy Mhmm:1|h[Lappy]|h|r: hi")
+expect("bracket: plain line start", bracket("[Lappy Mhmm]: hello"), "[Lappy]: hello")
+expect("bracket: plain after colour code", bracket("|cff00ff00[Lappy Mhmm]: hello|r"), "|cff00ff00[Lappy]: hello|r")
+expect("bracket: plain with colour reset before colon", bracket("|cff00ff00[Lappy Mhmm]|r: hi"),
+    "|cff00ff00[Lappy]|r: hi")
+expect("bracket: other surname untouched", bracket("[Dave Smith]: hello"), "[Dave Smith]: hello")
+expect("bracket: link, other surname untouched",
+    bracket("|Hplayer:Dave Smith:1|h[Dave Smith]|h: hello"), "|Hplayer:Dave Smith:1|h[Dave Smith]|h: hello")
+expect("bracket: name later in the body untouched",
+    bracket("hello [Lappy Mhmm]: hi"), "hello [Lappy Mhmm]: hi")
+expect("bracket: plain name in body untouched after a link",
+    bracket("|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h: see [Dave Mhmm]: ok"),
+    "|Hplayer:Lappy Mhmm:1|h[Lappy]|h: see [Dave Mhmm]: ok")
+expect("bracket: plain bracket without colon untouched", bracket("[Lappy Mhmm] hello"), "[Lappy Mhmm] hello")
+expect("bracket: several links",
+    bracket("|Hplayer:A Mhmm:1|h[A Mhmm]|h and |Hplayer:B Smith:2|h[B Smith]|h"),
+    "|Hplayer:A Mhmm:1|h[A]|h and |Hplayer:B Smith:2|h[B Smith]|h")
+expect("bracket: idempotent",
+    bracket(bracket("|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h: hello")),
+    "|Hplayer:Lappy Mhmm:1|h[Lappy]|h: hello")
+expect("bracket: idempotent (plain)", bracket(bracket("[Lappy Mhmm]: hello")), "[Lappy]: hello")
+expect("bracket: no brackets", bracket("just text"), "just text")
+expect("bracket: empty set hides nothing",
+    HSS.StripSurnameInBracketNames("[Lappy Mhmm]: hi", HSS.BuildSurnameSet({})), "[Lappy Mhmm]: hi")
+expect("bracket: nil", bracket(nil), nil)
+expect("bracket: number", bracket(4), 4)
+
+-- ---------- Guild & Communities pane (stubbed client) ----------
+local function loadCommunities()
+    local H = {}
+    for _, file in ipairs({ "Core", "Chat", "Settings", "Communities" }) do
+        assert(loadfile("HideSomeSurnames/" .. file .. ".lua"))("HideSomeSurnames", H)
+    end
+    H.LoadSettings(nil, DEFAULTS)
+    return H
+end
+
+local function fakeMessageFrame(record)
+    local f = {}
+    function f:TransformMessages(predicateFn, transformFn)
+        record.calls = (record.calls or 0) + 1
+        record.predicate, record.transform = predicateFn, transformFn
+    end
+    return f
+end
+
+local immediateTimer = { After = function(_, fn) fn() end }
+
+do
+    -- found at the likely path
+    local C = loadCommunities()
+    local record = {}
+    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame(record) } },
+        C_Timer = immediateTimer }, function()
+        C.ScheduleCommunitiesPass()
+        expect("communities: message frame found at the likely path", C.communitiesStats.path,
+            "CommunitiesFrame.Chat.MessageFrame")
+        expect("communities: TransformMessages called once", record.calls, 1)
+
+        expect("communities: predicate accepts a name line", record.predicate("[Lappy Mhmm]: hi"), true)
+        expect("communities: predicate rejects a line without brackets", record.predicate("hello"), false)
+        expect("communities: predicate rejects nil", record.predicate(nil), false)
+        local out, r, extra = record.transform("[Lappy Mhmm]: hi", 0.5, "EXTRA")
+        expect("communities: transform rewrites the name", out, "[Lappy]: hi")
+        expect("communities: transform keeps other args", tostring(r) .. tostring(extra), "0.5EXTRA")
+        expect("communities: rewrite counted", C.communitiesStats.rewritten, 1)
+
+        C.SetChannel("GUILD", false)
+        expect("communities: Guild checkbox off -> predicate rejects", record.predicate("[Lappy Mhmm]: hi"), false)
+        C.SetChannel("GUILD", true)
+        expect("communities: Guild checkbox on again", record.predicate("[Lappy Mhmm]: hi"), true)
+
+        -- a failing stripper never reaches the game and trips the breaker at 3
+        C.StripSurnameInBracketNames = function() error("boom") end
+        local last
+        for _ = 1, 4 do last = record.transform("[Lappy Mhmm]: hi") end
+        expect("communities: failing stripper returns the original line", last, "[Lappy Mhmm]: hi")
+        expect("communities: breaker trips after 3 failures", C.FeatureEnabled("communities"), false)
+        local before = record.calls
+        C.ScheduleCommunitiesPass()
+        expect("communities: disabled feature does no more passes", record.calls, before)
+    end)
+
+    -- found by searching the Chat subtree
+    local D = loadCommunities()
+    local recordD = {}
+    local grandchild = fakeMessageFrame(recordD)
+    local child = { GetChildren = function() return grandchild end }
+    withGlobals({ CommunitiesFrame = { Chat = { GetChildren = function() return child end } },
+        C_Timer = immediateTimer }, function()
+        D.ScheduleCommunitiesPass()
+        expect("communities: found by subtree search", D.communitiesStats.found, true)
+        expect("communities: search path recorded", D.communitiesStats.path:find("child", 1, true) ~= nil, true)
+        expect("communities: search result got the transform", recordD.calls, 1)
+    end)
+
+    -- found by field name inside Chat
+    local D2 = loadCommunities()
+    local recordD2 = {}
+    withGlobals({ CommunitiesFrame = { Chat = { Messages = fakeMessageFrame(recordD2) } },
+        C_Timer = immediateTimer }, function()
+        D2.ScheduleCommunitiesPass()
+        expect("communities: found by field search", D2.communitiesStats.path, "CommunitiesFrame.Chat.Messages")
+    end)
+
+    -- not available: no window, a frame without TransformMessages, a forbidden window
+    for label, window in pairs({
+        ["no window"] = false,
+        ["no TransformMessages"] = { Chat = { MessageFrame = {} } },
+        ["forbidden window"] = { IsForbidden = function() return true end, Chat = {} },
+    }) do
+        local E = loadCommunities()
+        withGlobals({ CommunitiesFrame = window, C_Timer = immediateTimer }, function()
+            local ok = pcall(E.ScheduleCommunitiesPass)
+            expect("communities (" .. label .. "): does not throw", ok, true)
+            expect("communities (" .. label .. "): reports not found", E.communitiesStats.found, false)
+        end)
+    end
+
+    -- no timer API
+    local F = loadCommunities()
+    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame({}) } }, C_Timer = false }, function()
+        expect("communities (no timer): does not throw", pcall(F.ScheduleCommunitiesPass), true)
+        expect("communities (no timer): recorded", F.communitiesStats.noScheduler, true)
+    end)
+
+    -- event registration: a rejected name must not throw or trip the breaker
+    local G = loadCommunities()
+    local registered = {}
+    local eventFrame = { RegisterEvent = function(_, event)
+        if event == "CLUB_MESSAGE_UPDATED" then error("unknown event") end
+        registered[#registered + 1] = event
+    end }
+    expect("communities events: registration does not throw", pcall(G.RegisterCommunitiesEvents, eventFrame), true)
+    expect("communities events: accepted ones registered", table.concat(G.communitiesStats.registered, ","),
+        "CLUB_MESSAGE_ADDED,CLUB_MESSAGE_HISTORY_RECEIVED")
+    expect("communities events: rejected one recorded", table.concat(G.communitiesStats.failed, ","),
+        "CLUB_MESSAGE_UPDATED")
+    expect("communities events: rejection doesn't count as a failure", G.GetFeatureState("communities").failures, 0)
+    expect("communities events: recognises its events", G.IsCommunitiesEvent("CLUB_MESSAGE_ADDED"), true)
+    expect("communities events: ignores chat events", G.IsCommunitiesEvent("CHAT_MSG_GUILD"), false)
+
+    -- window OnShow hook
+    local H2 = loadCommunities()
+    local recordH = {}
+    local shownHandlers = {}
+    local window = { Chat = { MessageFrame = fakeMessageFrame(recordH) },
+        HookScript = function(_, event, fn) shownHandlers[event] = fn end }
+    withGlobals({ CommunitiesFrame = window, C_Timer = immediateTimer }, function()
+        expect("communities hook: hooks the window", H2.HookCommunitiesWindow(), true)
+        expect("communities hook: hooks OnShow", type(shownHandlers.OnShow), "function")
+        local callsAfterHook = recordH.calls
+        shownHandlers.OnShow()
+        expect("communities hook: OnShow triggers a pass", recordH.calls, callsAfterHook + 1)
+        shownHandlers.OnShow = nil
+        expect("communities hook: second call is a no-op", H2.HookCommunitiesWindow(), true)
+        expect("communities hook: not hooked twice", shownHandlers.OnShow, nil)
+    end)
+    withGlobals({ CommunitiesFrame = false }, function()
+        local I = loadCommunities()
+        expect("communities hook: no window -> false, no throw", select(2, pcall(I.HookCommunitiesWindow)), false)
+    end)
+
+    -- /hss debug under
+    local J = loadCommunities()
+    local focus = { GetObjectType = function() return "Frame" end, GetName = function() return "SomeFrame" end,
+        GetParent = function() return nil end, TransformMessages = function() end }
+    local dumped = {}
+    withGlobals({ GetMouseFoci = function() return { focus } end, C_Timer = immediateTimer,
+        CommunitiesFrame = false }, function()
+        J.DumpUnderMouse(function(line) dumped[#dumped + 1] = line end, "2")
+        local text = table.concat(dumped, "\n")
+        expect("under: reports the frame under the mouse", text:find("SomeFrame", 1, true) ~= nil, true)
+        expect("under: reports TransformMessages", text:find("TransformMessages=true", 1, true) ~= nil, true)
+    end)
+    local noApi = {}
+    withGlobals({ GetMouseFoci = false, GetMouseFocus = false, C_Timer = immediateTimer }, function()
+        expect("under: no mouse API does not throw",
+            pcall(J.DumpUnderMouse, function(line) noApi[#noApi + 1] = line end, 1), true)
+        expect("under: no mouse API is reported", table.concat(noApi, "\n"):find("nothing found", 1, true) ~= nil, true)
+    end)
+end
+
 -- ---------- safety: never throw, fall back to full name ----------
 local realStrip = HSS.StripSurnameInLinks
 HSS.StripSurnameInLinks = function() error("boom") end

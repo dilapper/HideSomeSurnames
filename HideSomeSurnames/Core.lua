@@ -86,6 +86,55 @@ function HSS.StripSurnameInLinks(message, surnameSet)
     return result
 end
 
+-- Names shown as "[Forename Surname]" in a chat-like pane whose link type we
+-- can't be sure of (the Guild & Communities window):
+--   |H<any type>:<payload>|h[Lappy Mhmm]|h: hi   ->   ...|h[Lappy]|h: hi
+-- Only the visible bracket text of a link is rewritten; the payload is never
+-- touched. A plain, unlinked "[Name]:" is only handled at the very start of the
+-- line (after colour codes), so a name typed later in a message is left alone.
+-- Idempotent; nil / non-string / secret input is returned unchanged.
+function HSS.StripSurnameInBracketNames(message, surnameSet)
+    if IsSecret(message) or type(message) ~= "string" then
+        return message
+    end
+
+    if not message:find("[", 1, true) then
+        return message
+    end
+
+    local result = message:gsub("(|H[^|]*|h)%[([^%]|]-)%]|h", function(openTag, inner)
+        local short = HSS.StripSurname(inner, surnameSet)
+        if short ~= inner then
+            return openTag .. "[" .. short .. "]|h"
+        end
+        return nil -- leave this link exactly as it was
+    end)
+
+    -- Plain "[Name]:" at the start of the line, after any colour codes.
+    local pos = 1
+    while true do
+        local _, colourEnd = result:find("^|c%x%x%x%x%x%x%x%x", pos)
+        if not colourEnd then
+            break
+        end
+        pos = colourEnd + 1
+    end
+
+    local name, after = result:match("^%[([^%]|]+)%]()", pos)
+    local tail = after
+    if tail and result:sub(tail, tail + 1) == "|r" then
+        tail = tail + 2 -- colour reset before the colon
+    end
+    if name and result:sub(tail, tail) == ":" then
+        local short = HSS.StripSurname(name, surnameSet)
+        if short ~= name then
+            result = result:sub(1, pos - 1) .. "[" .. short .. "]" .. result:sub(after)
+        end
+    end
+
+    return result
+end
+
 -- Owner titles on pets and similar units:
 --   <Lappy Mhmm's Pet>  ->  <Lappy's Pet>
 -- Matches on the text ("Forename Surname's ..."), so it doesn't matter which

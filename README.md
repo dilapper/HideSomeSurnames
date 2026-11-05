@@ -45,10 +45,12 @@ If you're sharing a copy with your own guild, edit `HSS.surnames` there so new i
 - `/hss add <surname>` / `/hss remove <surname>` / `/hss list` - manage surnames without the panel
 - `/hss reset` - go back to the defaults in `Config.lua`
 - `/hss debug` - diagnostics (client build, hook status, which Options API was used, target name before/after). Include this output in bug reports.
+- `/hss debug under [seconds]` - after a short delay (default 3s), prints the UI element under your mouse and its parents; hover something and send me the result when a name won't change
 - `/hss debug titles` - pet-title diagnostics: the pet-title tooltip lines the addon has seen and what it did with them (hover a pet, then run this)
 
 ## Scope and limitations
 - Pet owner titles are shortened in the **mouseover tooltip**: `Lappy Mhmm's Pet` becomes `Lappy's Pet`, using the same surname list. This works on any pet whose title carries a hidden surname, and only for English-style possessives.
+- The **chat pane of the Guild & Communities window** shows `[Lappy]` instead of `[Lappy Mhmm]`, and follows the **Guild** checkbox. Only that pane is changed: the member list on the right, the guild name, and names typed inside messages still show full names. This relies on the window's internals, which I couldn't check ahead of time. If the pane still shows surnames, open the window and run `/hss debug` (see the "guild & communities chat pane" section), then hover the pane and run `/hss debug under 3`, and include both outputs in a bug report.
 - **Not possible:** the large floating name and `<Lappy Mhmm's Pet>` title drawn above a pet in the world is rendered by the game itself, not by a UI element an addon can reach (confirmed in game: it appears even with no nameplate for the pet), so it still shows the surname. Hiding pet names altogether is a game setting, not something this addon changes.
 - Covers nameplates, unit/party/raid frames, and chat in **say, party, guild and guild officer**. Whispers, world/custom channels, yell, raid and instance chat (including dungeon-finder party chat) always show full names. Tooltips, /who and LFG are not covered.
 - Only the visible name in chat is shortened. The hidden link data keeps the full name, so clicking a name to whisper, invite etc. still works. Whispers are never modified.

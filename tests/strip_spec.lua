@@ -628,7 +628,8 @@ do
         expect("communities hook: hooks OnShow", type(shownHandlers.OnShow), "function")
         local callsAfterHook = recordH.calls
         shownHandlers.OnShow()
-        expect("communities hook: OnShow triggers a pass", recordH.calls, callsAfterHook + 1)
+        -- OnShow schedules passes at 0, 0.5 and 2 seconds (all immediate under this stub timer)
+        expect("communities hook: OnShow triggers its passes", recordH.calls, callsAfterHook + 3)
         shownHandlers.OnShow = nil
         expect("communities hook: second call is a no-op", H2.HookCommunitiesWindow(), true)
         expect("communities hook: not hooked twice", shownHandlers.OnShow, nil)
@@ -636,6 +637,77 @@ do
     withGlobals({ CommunitiesFrame = false }, function()
         local I = loadCommunities()
         expect("communities hook: no window -> false, no throw", select(2, pcall(I.HookCommunitiesWindow)), false)
+    end)
+
+    -- delayed passes use their own delays and coalesce per delay
+    local K = loadCommunities()
+    local delays, pending = {}, {}
+    local manualTimer = { After = function(delay, fn) delays[#delays + 1] = delay; pending[#pending + 1] = fn end }
+    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame({}) } }, C_Timer = manualTimer }, function()
+        K.ScheduleCommunitiesPass(); K.ScheduleCommunitiesPass()
+        K.ScheduleCommunitiesPass(0.5); K.ScheduleCommunitiesPass(0.5)
+        expect("communities: same-delay passes are coalesced", table.concat(delays, ","), "0,0.5")
+        for _, fn in ipairs(pending) do fn() end
+        K.ScheduleCommunitiesPass()
+        expect("communities: can schedule again after it ran", #delays, 3)
+    end)
+
+    -- diagnostics: raw lines are recorded, escaped, with their argument types
+    local L = loadCommunities()
+    local recordL = {}
+    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame(recordL) } },
+        C_Timer = immediateTimer, issecretvalue = function(v) return v == "SECRET" end }, function()
+        L.ScheduleCommunitiesPass()
+        recordL.predicate("|Hplayer:Lappy Mhmm:1|h[Lappy Mhmm]|h: hi", 1, 0.5, "x")
+        recordL.predicate("no brackets here")
+        recordL.predicate("SECRET")
+        recordL.predicate(nil)
+        local stats = L.communitiesStats
+        expect("diag: lines counted", stats.predicateCalls, 4)
+        expect("diag: lines without a bracket counted", stats.noBracket, 3)
+        expect("diag: bracketed line sampled", #stats.samples, 1)
+        expect("diag: sample is escaped so link codes are visible",
+            stats.samples[1].text, "||Hplayer:Lappy Mhmm:1||h[Lappy Mhmm]||h: hi")
+        expect("diag: argument types recorded", stats.samples[1].args, "string,number,number,string")
+        expect("diag: accepted flag recorded", stats.samples[1].accepted, true)
+        for i = 1, 10 do recordL.predicate("[Name " .. i .. "]: x") end
+        expect("diag: samples are capped", #stats.samples, 6)
+    end)
+
+    -- hooking AddMessage: new lines trigger a pass, our own pass cannot loop
+    local M = loadCommunities()
+    local hookCount = 0
+    local passCount = 0
+    local msgFrame = { AddMessage = function() end }
+    function msgFrame:TransformMessages()
+        passCount = passCount + 1
+        self:AddMessage("re-added by our own pass") -- worst case: a transform that re-adds lines
+    end
+    withGlobals({
+        CommunitiesFrame = { Chat = { MessageFrame = msgFrame } },
+        C_Timer = immediateTimer,
+        -- behaves like the real one: the original runs, then the hook
+        hooksecurefunc = function(frame, name, fn)
+            local original = frame[name]
+            frame[name] = function(...) original(...); fn(...) end
+            hookCount = hookCount + 1
+        end,
+    }, function()
+        M.ScheduleCommunitiesPass()
+        expect("addmessage: hook installed once", hookCount, 1)
+        expect("addmessage: reported as hooked", M.communitiesStats.addMessageHooked, true)
+        expect("addmessage: our own pass did not trigger another", passCount, 1)
+
+        msgFrame:AddMessage("the game adds a line")
+        expect("addmessage: a new line triggers a pass", passCount, 2)
+
+        M.ScheduleCommunitiesPass()
+        expect("addmessage: not hooked again", hookCount, 1)
+    end)
+    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame({}) } },
+        C_Timer = immediateTimer, hooksecurefunc = function() error("no such method") end }, function()
+        local N = loadCommunities()
+        expect("addmessage: a failing hook does not throw", pcall(N.ScheduleCommunitiesPass), true)
     end)
 
     -- /hss debug under

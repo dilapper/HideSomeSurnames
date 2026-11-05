@@ -24,6 +24,8 @@ local MESSAGE_EVENTS = {
 
 local SEARCH_DEPTH = 4
 
+local SAMPLES_MAX = 6
+
 HSS.communitiesStats = {
     found = false,
     path = nil,
@@ -33,7 +35,43 @@ HSS.communitiesStats = {
     registered = {},   -- events we registered
     failed = {},       -- events the client rejected
     shownHooked = false,
+    addMessageHooked = false,
+    predicateCalls = 0,    -- lines offered to the predicate
+    noBracket = 0,         -- of those, lines without any "["
+    samples = {},          -- recent lines containing "[" (escaped), for /hss debug
 }
+
+-- Makes a raw line printable: "|" doubled so colour/link codes show up.
+local function Escape(message)
+    if IsSecret(message) then
+        return "<secret>"
+    end
+    if type(message) ~= "string" then
+        return "<" .. type(message) .. ">"
+    end
+    local text = message:gsub("|", "||")
+    if #text > 200 then
+        text = text:sub(1, 200) .. "..."
+    end
+    return text
+end
+
+local function RecordSample(message, accepted, ...)
+    local stats = HSS.communitiesStats
+    local types = {}
+    for index = 1, math.min(select("#", ...), 4) do
+        types[#types + 1] = type((select(index, ...)))
+    end
+
+    stats.samples[#stats.samples + 1] = {
+        text = Escape(message),
+        accepted = accepted,
+        args = (type(message)) .. (#types > 0 and ("," .. table.concat(types, ",")) or ""),
+    }
+    if #stats.samples > SAMPLES_MAX then
+        table.remove(stats.samples, 1)
+    end
+end
 
 local function IsForbidden(object)
     return object.IsForbidden ~= nil and object:IsForbidden()
@@ -97,14 +135,22 @@ end
 
 -- TransformMessages callbacks. These lines don't come from CHAT_MSG_* events,
 -- so there is no channel to look at: the window follows the Guild checkbox.
-local function ShouldTransform(message)
+local function ShouldTransform(message, ...)
+    local stats = HSS.communitiesStats
+    stats.predicateCalls = stats.predicateCalls + 1
+
+    local bracketed = not IsSecret(message) and type(message) == "string"
+        and message:find("[", 1, true) ~= nil
+    if bracketed then
+        RecordSample(message, HSS.IsChannelEnabled("GUILD"), ...)
+    else
+        stats.noBracket = stats.noBracket + 1
+    end
+
     if not HSS.IsChannelEnabled("GUILD") then
         return false
     end
-    if IsSecret(message) or type(message) ~= "string" then
-        return false
-    end
-    return message:find("[", 1, true) ~= nil
+    return bracketed
 end
 
 local function predicate(...)
@@ -132,11 +178,31 @@ end
 HSS.CommunitiesPredicate = predicate
 HSS.CommunitiesTransform = transform
 
-local passScheduled = false
+local scheduled = {}   -- delay -> true while a pass with that delay is pending
+local inPass = false    -- true while our own TransformMessages call is running
+local hookedFrames = setmetatable({}, { __mode = "k" })
+
+-- Rewrite whenever a line is added to the pane, so history that arrives after
+-- our first pass is still handled. (A guess at why a single pass wasn't enough;
+-- ignored while our own pass runs so it can never feed itself.)
+local function HookAddMessage(frame)
+    if hookedFrames[frame] or type(frame.AddMessage) ~= "function"
+        or type(hooksecurefunc) ~= "function"
+    then
+        return
+    end
+
+    if pcall(hooksecurefunc, frame, "AddMessage", function()
+        if not inPass then
+            HSS.ScheduleCommunitiesPass()
+        end
+    end) then
+        hookedFrames[frame] = true
+        HSS.communitiesStats.addMessageHooked = true
+    end
+end
 
 local function RunPass()
-    passScheduled = false
-
     if not HSS.FeatureEnabled("communities") then
         return
     end
@@ -150,14 +216,19 @@ local function RunPass()
         return
     end
 
+    HookAddMessage(frame)
+
     stats.passes = stats.passes + 1
+    inPass = true
     HSS.Try("communities", frame.TransformMessages, frame, predicate, transform)
+    inPass = false
 end
 
--- One pass on the next tick (after Blizzard has rendered); calls in the same
--- tick are coalesced. Never throws.
-function HSS.ScheduleCommunitiesPass()
-    if passScheduled or not HSS.FeatureEnabled("communities") then
+-- One pass after `delay` seconds (default: the next tick, after Blizzard has
+-- rendered). Calls with the same delay are coalesced. Never throws.
+function HSS.ScheduleCommunitiesPass(delay)
+    delay = delay or 0
+    if scheduled[delay] or not HSS.FeatureEnabled("communities") then
         return
     end
 
@@ -166,14 +237,14 @@ function HSS.ScheduleCommunitiesPass()
         return
     end
 
-    passScheduled = true
-    local ok = HSS.Try("communities", C_Timer.After, 0, function()
+    scheduled[delay] = true
+    local ok = HSS.Try("communities", C_Timer.After, delay, function()
+        scheduled[delay] = nil
         HSS.Try("communities", RunPass)
-        passScheduled = false
     end)
 
     if not ok then
-        passScheduled = false
+        scheduled[delay] = nil
     end
 end
 
@@ -213,7 +284,10 @@ function HSS.HookCommunitiesWindow()
     end
 
     window:HookScript("OnShow", function()
+        -- History can arrive a little after the window opens.
         HSS.ScheduleCommunitiesPass()
+        HSS.ScheduleCommunitiesPass(0.5)
+        HSS.ScheduleCommunitiesPass(2)
     end)
     stats.shownHooked = true
     HSS.ScheduleCommunitiesPass()

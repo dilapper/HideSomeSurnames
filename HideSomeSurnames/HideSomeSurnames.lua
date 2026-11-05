@@ -296,7 +296,16 @@ local function Debug()
     print("  events registered: "
         .. (#cstats.registered > 0 and table.concat(cstats.registered, ", ") or "(none)")
         .. (#cstats.failed > 0 and ("  rejected by client: " .. table.concat(cstats.failed, ", ")) or ""))
-    print("  (open the window, then run this again; to inspect the pane: /hss debug under 3)")
+    print("  linesSeen=" .. cstats.predicateCalls .. " withoutBracket=" .. cstats.noBracket
+        .. " addMessageHooked=" .. tostring(cstats.addMessageHooked))
+    if #cstats.samples == 0 then
+        print("  no bracketed lines seen yet (open the window with chat showing, then run this again)")
+    end
+    for _, sample in ipairs(cstats.samples) do
+        print("  line [accepted=" .. tostring(sample.accepted) .. " args=" .. sample.args .. "]: "
+            .. sample.text)
+    end
+    print("  (to inspect the pane: /hss debug under 3)")
 
     print("  -- safety --")
     for _, name in ipairs({ "frames", "chat", "tooltip", "communities", "ui", "startup" }) do

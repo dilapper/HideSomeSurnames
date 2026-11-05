@@ -1,8 +1,8 @@
 ## Interface: 16001
 ## Title: HideSomeSurnames
-## Notes: Hides chosen shared surnames (editable in-game) from nameplates, unit frames and say/party/guild/officer chat in WoW: Forever. Other players' surnames stay visible.
+## Notes: Hides chosen shared surnames (editable in-game) from nameplates, unit frames, pet titles and say/party/guild/officer chat in WoW: Forever. Other players' surnames stay visible.
 ## Author: dilapper
-## Version: 0.3.1
+## Version: 0.4.0
 ## SavedVariables: HideSomeSurnamesDB
 ## IconTexture: Interface\Icons\INV_Misc_Note_01
 
@@ -11,4 +11,6 @@ Core.lua
 Chat.lua
 Settings.lua
 UI.lua
+Tooltip.lua
+Titles.lua
 HideSomeSurnames.lua

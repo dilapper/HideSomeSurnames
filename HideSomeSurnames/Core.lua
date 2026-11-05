@@ -86,6 +86,40 @@ function HSS.StripSurnameInLinks(message, surnameSet)
     return result
 end
 
+-- Owner titles on pets and similar units:
+--   <Lappy Mhmm's Pet>  ->  <Lappy's Pet>
+-- Matches on the text ("Forename Surname's ..."), so it doesn't matter which
+-- unit or UI element it came from. Only rewrites when the surname is in the
+-- set; everything else (other surnames, guild tags, already-short titles,
+-- non-strings, secret values) is returned unchanged.
+function HSS.StripSurnameInTitle(text, surnameSet)
+    if IsSecret(text) or type(text) ~= "string" then
+        return text
+    end
+
+    if not text:find("'", 1, true) then
+        return text
+    end
+
+    -- Optional "<", forename, surname, then a possessive ('s, or a bare ' for
+    -- names ending in s) and the rest of the title.
+    local open, forename, surname, rest = text:match("^(<?)(%S+)%s+([^%s']+)('s?%s.*)$")
+    if not forename then
+        return text
+    end
+
+    if surnameSet and surnameSet[surname:lower()] then
+        -- "Lappy Jones' Pet" ends in a bare apostrophe because "Jones" ends in
+        -- s; once the surname is gone the forename needs its own 's.
+        if rest:find("^'%s") and not forename:lower():find("s$") then
+            rest = "'s" .. rest:sub(2)
+        end
+        return open .. forename .. rest
+    end
+
+    return text
+end
+
 -- ============================================================
 -- SAFETY
 -- ============================================================

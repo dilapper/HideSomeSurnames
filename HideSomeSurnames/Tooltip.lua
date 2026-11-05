@@ -2,10 +2,8 @@ local _, HSS = ...
 
 -- Pet/owner titles in the mouseover tooltip.
 --
--- We don't know which tooltip line type carries the title, so the same small
--- handler is registered for every line type. It matches on the text, so the
--- type doesn't matter. Nothing is replaced; the lines are edited as they are
--- built, and a failure leaves the line exactly as Blizzard wrote it.
+-- Nothing is replaced; the line is edited as it is built, and a failure
+-- leaves it exactly as Blizzard wrote it. Matching is by text.
 --
 -- Nothing here touches WoW globals at load time (testable with plain Lua).
 
@@ -69,21 +67,53 @@ function HSS.InstallTooltipHook()
         return false
     end
 
-    local count = 0
-    for name, lineType in pairs(Enum.TooltipDataLineType) do
-        if type(lineType) == "number" then
-            lineTypeNames[lineType] = name
-            local ok = HSS.Try("tooltip", TooltipDataProcessor.AddLinePreCall, lineType,
-                function(_, lineData)
-                    HSS.Try("tooltip", RewriteLine, lineType, lineData)
-                end)
-            if ok then
-                count = count + 1
+    -- Confirmed in game: the owner title ("<Lappy Mhmm's Pet>") is its own
+    -- UnitOwner line. If this client has no such line type, fall back to
+    -- checking every line type (matching is by text, so that still works).
+    local wanted = {}
+    local ownerType = Enum.TooltipDataLineType.UnitOwner
+    if type(ownerType) == "number" then
+        wanted[#wanted + 1] = { name = "UnitOwner", lineType = ownerType }
+    else
+        for name, lineType in pairs(Enum.TooltipDataLineType) do
+            if type(lineType) == "number" then
+                wanted[#wanted + 1] = { name = name, lineType = lineType }
             end
+        end
+    end
+
+    local count = 0
+    for _, entry in ipairs(wanted) do
+        local lineType = entry.lineType
+        lineTypeNames[lineType] = entry.name
+        local ok = HSS.Try("tooltip", TooltipDataProcessor.AddLinePreCall, lineType,
+            function(_, lineData)
+                HSS.Try("tooltip", RewriteLine, lineType, lineData)
+            end)
+        if ok then
+            count = count + 1
         end
     end
 
     HSS.tooltipStats.lineTypes = count
     installed = count > 0
     return installed
+end
+
+-- /hss debug titles: what the tooltip handler has seen. `out` is a print
+-- function. (The overhead name above a unit is drawn by the game engine and
+-- is not reachable from an addon, so there is nothing to dump for it.)
+function HSS.DumpTitles(out)
+    out("titles debug")
+
+    local tooltip = HSS.tooltipStats
+    out("  tooltip: registered for " .. tooltip.lineTypes .. " line type(s), rewritten="
+        .. tooltip.rewritten)
+    if #tooltip.recent == 0 then
+        out("  tooltip: no possessive-looking lines seen yet (hover a pet, then run this again)")
+    end
+    for _, entry in ipairs(tooltip.recent) do
+        out(("  tooltip line [%s]: '%s' -> %s"):format(entry.lineType, tostring(entry.before),
+            entry.after and ("'" .. entry.after .. "'") or "(unchanged)"))
+    end
 end

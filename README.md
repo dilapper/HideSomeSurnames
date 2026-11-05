@@ -45,10 +45,11 @@ If you're sharing a copy with your own guild, edit `HSS.surnames` there so new i
 - `/hss add <surname>` / `/hss remove <surname>` / `/hss list` - manage surnames without the panel
 - `/hss reset` - go back to the defaults in `Config.lua`
 - `/hss debug` - diagnostics (client build, hook status, which Options API was used, target name before/after). Include this output in bug reports.
-- `/hss debug titles` - pet-title diagnostics: what the pet's tooltip lines and nameplate contain (target the pet, hover it, then run this)
+- `/hss debug titles` - pet-title diagnostics: the pet-title tooltip lines the addon has seen and what it did with them (hover a pet, then run this)
 
 ## Scope and limitations
-- Pet owner titles are shortened too: `<Lappy Mhmm's Pet>` becomes `<Lappy's Pet>` (mouseover tooltip and the pet's nameplate), using the same surname list. This works on any pet whose title carries a hidden surname, and only for English-style possessives. Where the title lives in the game's UI wasn't known when this was added, so if a pet title still shows the surname, run `/hss debug titles` with the pet targeted (and after hovering it) and include the output in a bug report.
+- Pet owner titles are shortened in the **mouseover tooltip**: `Lappy Mhmm's Pet` becomes `Lappy's Pet`, using the same surname list. This works on any pet whose title carries a hidden surname, and only for English-style possessives.
+- **Not possible:** the large floating name and `<Lappy Mhmm's Pet>` title drawn above a pet in the world is rendered by the game itself, not by a UI element an addon can reach (confirmed in game: it appears even with no nameplate for the pet), so it still shows the surname. Hiding pet names altogether is a game setting, not something this addon changes.
 - Covers nameplates, unit/party/raid frames, and chat in **say, party, guild and guild officer**. Whispers, world/custom channels, yell, raid and instance chat (including dungeon-finder party chat) always show full names. Tooltips, /who and LFG are not covered.
 - Only the visible name in chat is shortened. The hidden link data keeps the full name, so clicking a name to whisper, invite etc. still works. Whispers are never modified.
 - If the addon can't hide a surname for any reason (unsupported API, restricted content), it shows the full name instead. If a feature errors repeatedly it switches itself off for the session and says so; it never throws Lua errors.

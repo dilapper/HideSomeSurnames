@@ -374,7 +374,7 @@ expect("title: empty set hides nothing",
 
 local function loadTitleModules()
     local H = {}
-    for _, file in ipairs({ "Core", "Chat", "Settings", "Tooltip", "Titles" }) do
+    for _, file in ipairs({ "Core", "Chat", "Settings", "Tooltip" }) do
         assert(loadfile("HideSomeSurnames/" .. file .. ".lua"))("HideSomeSurnames", H)
     end
     H.LoadSettings(nil, DEFAULTS)
@@ -395,129 +395,72 @@ do
     local T = loadTitleModules()
     local handlers = {}
     local fakeProcessor = { AddLinePreCall = function(lineType, fn) handlers[lineType] = fn end }
-    local fakeEnum = { TooltipDataLineType = { None = 0, UnitName = 2, Other = 7, notANumber = "x" } }
+    local fakeEnum = { TooltipDataLineType = { None = 0, UnitName = 2, UnitOwner = 7, notANumber = "x" } }
 
     withGlobals({ TooltipDataProcessor = fakeProcessor, Enum = fakeEnum,
         issecretvalue = function(v) return v == "SECRET" end }, function()
         expect("tooltip: installs", T.InstallTooltipHook(), true)
-        expect("tooltip: registered for every numeric line type", T.tooltipStats.lineTypes, 3)
+        expect("tooltip: registers for UnitOwner only", T.tooltipStats.lineTypes, 1)
+        expect("tooltip: nothing registered for other line types",
+            handlers[0] == nil and handlers[2] == nil and handlers[7] ~= nil, true)
         expect("tooltip: second install is a no-op", T.InstallTooltipHook(), true)
 
         local line = { leftText = "<Lappy Mhmm's Pet>" }
-        handlers[0](nil, line)
-        expect("tooltip: rewrites pet title (any line type)", line.leftText, "<Lappy's Pet>")
-        expect("tooltip: rewrite counted", T.tooltipStats.rewritten, 1)
+        handlers[7](nil, line)
+        expect("tooltip: rewrites pet title", line.leftText, "<Lappy's Pet>")
+        local noBrackets = { leftText = "Lappy Mhmm's Pet" }
+        handlers[7](nil, noBrackets)
+        expect("tooltip: rewrites pet title without brackets", noBrackets.leftText, "Lappy's Pet")
+        expect("tooltip: rewrites counted", T.tooltipStats.rewritten, 2)
 
         local other = { leftText = "<Dave Smith's Pet>" }
         handlers[7](nil, other)
         expect("tooltip: other surname untouched", other.leftText, "<Dave Smith's Pet>")
 
         local plain = { leftText = "Level 10 Beast" }
-        handlers[2](nil, plain)
+        handlers[7](nil, plain)
         expect("tooltip: unrelated line untouched", plain.leftText, "Level 10 Beast")
 
         local secret = { leftText = "SECRET" }
-        handlers[0](nil, secret)
+        handlers[7](nil, secret)
         expect("tooltip: secret text untouched", secret.leftText, "SECRET")
 
-        expect("tooltip: nil lineData does not throw", pcall(handlers[0], nil, nil), true)
-        expect("tooltip: non-table lineData does not throw", pcall(handlers[0], nil, "text"), true)
+        expect("tooltip: nil lineData does not throw", pcall(handlers[7], nil, nil), true)
+        expect("tooltip: non-table lineData does not throw", pcall(handlers[7], nil, "text"), true)
         expect("tooltip: recent lines recorded for debugging", #T.tooltipStats.recent >= 2, true)
+
+        local dumped = {}
+        T.DumpTitles(function(text) dumped[#dumped + 1] = text end)
+        expect("tooltip: debug dump shows recent lines",
+            table.concat(dumped, "\n"):find("Lappy Mhmm's Pet", 1, true) ~= nil, true)
 
         -- a failing stripper never reaches the game and trips the breaker at 3
         T.StripSurnameInTitle = function() error("boom") end
         local bad = { leftText = "<Lappy Mhmm's Pet>" }
         for _ = 1, 4 do
-            expect("tooltip: failing stripper does not throw", pcall(handlers[0], nil, bad), true)
+            expect("tooltip: failing stripper does not throw", pcall(handlers[7], nil, bad), true)
         end
         expect("tooltip: failing stripper leaves the line alone", bad.leftText, "<Lappy Mhmm's Pet>")
         expect("tooltip: breaker trips after 3 failures", T.FeatureEnabled("tooltip"), false)
     end)
 
+    -- a client without a UnitOwner line type: fall back to every numeric type
+    local T3 = loadTitleModules()
+    local fallbackHandlers = {}
+    withGlobals({
+        TooltipDataProcessor = { AddLinePreCall = function(lineType, fn) fallbackHandlers[lineType] = fn end },
+        Enum = { TooltipDataLineType = { None = 0, UnitName = 2, Other = 5 } },
+    }, function()
+        expect("tooltip fallback: installs", T3.InstallTooltipHook(), true)
+        expect("tooltip fallback: registers for every numeric line type", T3.tooltipStats.lineTypes, 3)
+        local line = { leftText = "<Lappy Mhmm's Pet>" }
+        fallbackHandlers[5](nil, line)
+        expect("tooltip fallback: still rewrites", line.leftText, "<Lappy's Pet>")
+    end)
+
     local T2 = loadTitleModules()
     withGlobals({ TooltipDataProcessor = false, Enum = false }, function()
         expect("tooltip: no API -> reports false, no throw", select(2, pcall(T2.InstallTooltipHook)), false)
-    end)
-end
-
--- nameplate / frame regions
-do
-    local R = loadTitleModules()
-
-    local function region(kind, text, forbidden)
-        local r = { _text = text }
-        function r:GetObjectType() return kind end
-        function r:IsForbidden() return forbidden == true end
-        if kind == "FontString" then
-            function r:GetText() return self._text end
-            function r:SetText(t) self._text = t end
-        end
-        return r
-    end
-
-    local function frame(unit, regions, forbidden)
-        local f = { unit = unit }
-        function f:GetRegions() return unpack(regions) end
-        function f:IsForbidden() return forbidden == true end
-        return f
-    end
-
-    withGlobals({
-        UnitExists = function() return true end,
-        UnitIsPlayer = function(unit) return unit == "player1" end,
-        issecretvalue = function(v) return v == "SECRET" end,
-    }, function()
-        local name, subtitle, texture = region("FontString", "Lappy"), region("FontString", "<Lappy Mhmm's Pet>"),
-            region("Texture")
-        R.ShortenTitleRegions(frame("nameplate3", { name, subtitle, texture }))
-        expect("regions: subtitle rewritten", subtitle._text, "<Lappy's Pet>")
-        expect("regions: name region untouched", name._text, "Lappy")
-        expect("regions: rewrite counted", R.titleStats.rewritten, 1)
-
-        local other = region("FontString", "<Dave Smith's Pet>")
-        R.ShortenTitleRegions(frame("nameplate3", { other }))
-        expect("regions: other surname untouched", other._text, "<Dave Smith's Pet>")
-
-        local blocked = region("FontString", "<Lappy Mhmm's Pet>", true)
-        R.ShortenTitleRegions(frame("nameplate3", { blocked }))
-        expect("regions: forbidden region skipped", blocked._text, "<Lappy Mhmm's Pet>")
-
-        local inForbidden = region("FontString", "<Lappy Mhmm's Pet>")
-        R.ShortenTitleRegions(frame("nameplate3", { inForbidden }, true))
-        expect("regions: forbidden frame skipped", inForbidden._text, "<Lappy Mhmm's Pet>")
-
-        local playerRegion = region("FontString", "<Lappy Mhmm's Pet>")
-        R.ShortenTitleRegions(frame("player1", { playerRegion }))
-        expect("regions: player units not scanned", playerRegion._text, "<Lappy Mhmm's Pet>")
-
-        local secret = region("FontString", "SECRET")
-        expect("regions: secret text does not throw", pcall(R.ShortenTitleRegions, frame("nameplate3", { secret })), true)
-        expect("regions: secret text untouched", secret._text, "SECRET")
-
-        expect("regions: nil frame does not throw", pcall(R.ShortenTitleRegions, nil), true)
-        expect("regions: frame without unit does not throw",
-            pcall(R.ShortenTitleRegions, { GetRegions = function() end }), true)
-
-        -- live settings: a surname added in game is hidden on the next scan
-        local live = region("FontString", "<Lappy Smith's Pet>")
-        R.ShortenTitleRegions(frame("nameplate3", { live }))
-        expect("regions: not hidden before it's added", live._text, "<Lappy Smith's Pet>")
-        R.AddSurname("Smith")
-        R.ShortenTitleRegions(frame("nameplate3", { live }))
-        expect("regions: hidden after adding the surname", live._text, "<Lappy's Pet>")
-
-        -- debug dump runs against stubs
-        local lines = {}
-        local plateFrame = frame("target", { region("FontString", "<Shown Text>") })
-        function plateFrame:GetChildren() return frame("target", { region("FontString", "child text") }) end
-        local plate = { UnitFrame = plateFrame }
-        function plate:GetRegions() return end
-        withGlobals({ C_NamePlate = { GetNamePlateForUnit = function() return plate end } }, function()
-            local okDump = pcall(R.DumpTitles, function(line) lines[#lines + 1] = line end)
-            expect("dump: does not throw", okDump, true)
-            expect("dump: shows region text", table.concat(lines, "\n"):find("<Shown Text>", 1, true) ~= nil, true)
-            expect("dump: shows child frame text", table.concat(lines, "\n"):find("child text", 1, true) ~= nil, true)
-        end)
     end)
 end
 

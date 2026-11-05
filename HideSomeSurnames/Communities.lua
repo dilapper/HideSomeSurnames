@@ -26,7 +26,6 @@ HSS.communitiesStats = {
     registered = {},   -- events we registered
     failed = {},       -- events the client rejected
     shownHooked = false,
-    addMessageHooked = false,
 }
 
 local function IsForbidden(object)
@@ -84,31 +83,11 @@ local function transform(message, ...)
     return message, ...
 end
 
-local scheduled = {}   -- delay -> true while a pass with that delay is pending
-local inPass = false    -- true while our own TransformMessages call is running
-local hookedFrames = setmetatable({}, { __mode = "k" })
-
--- Rewrite whenever a line is added to the pane, so history that arrives after
--- our first pass is still handled. Ignored while our own pass runs so it can
--- never feed itself.
-local function HookAddMessage(frame)
-    if hookedFrames[frame] or type(frame.AddMessage) ~= "function"
-        or type(hooksecurefunc) ~= "function"
-    then
-        return
-    end
-
-    if pcall(hooksecurefunc, frame, "AddMessage", function()
-        if not inPass then
-            HSS.ScheduleCommunitiesPass()
-        end
-    end) then
-        hookedFrames[frame] = true
-        HSS.communitiesStats.addMessageHooked = true
-    end
-end
+local passScheduled = false
 
 local function RunPass()
+    passScheduled = false
+
     if not HSS.FeatureEnabled("communities") then
         return
     end
@@ -121,19 +100,14 @@ local function RunPass()
         return
     end
 
-    HookAddMessage(frame)
-
     stats.passes = stats.passes + 1
-    inPass = true
     HSS.Try("communities", frame.TransformMessages, frame, predicate, transform)
-    inPass = false
 end
 
--- One pass after `delay` seconds (default: the next tick, after Blizzard has
--- rendered). Calls with the same delay are coalesced. Never throws.
-function HSS.ScheduleCommunitiesPass(delay)
-    delay = delay or 0
-    if scheduled[delay] or not HSS.FeatureEnabled("communities") then
+-- One pass on the next tick (after Blizzard has rendered); calls in the same
+-- tick are coalesced. Never throws.
+function HSS.ScheduleCommunitiesPass()
+    if passScheduled or not HSS.FeatureEnabled("communities") then
         return
     end
 
@@ -141,14 +115,13 @@ function HSS.ScheduleCommunitiesPass(delay)
         return
     end
 
-    scheduled[delay] = true
-    local ok = HSS.Try("communities", C_Timer.After, delay, function()
-        scheduled[delay] = nil
-        HSS.Try("communities", RunPass)
+    passScheduled = true
+    local ok = HSS.Try("communities", C_Timer.After, 0, function()
+        HSS.Try("communities", RunPass) -- RunPass clears passScheduled first thing
     end)
 
     if not ok then
-        scheduled[delay] = nil
+        passScheduled = false
     end
 end
 
@@ -188,10 +161,7 @@ function HSS.HookCommunitiesWindow()
     end
 
     window:HookScript("OnShow", function()
-        -- History can arrive a little after the window opens.
         HSS.ScheduleCommunitiesPass()
-        HSS.ScheduleCommunitiesPass(0.5)
-        HSS.ScheduleCommunitiesPass(2)
     end)
     stats.shownHooked = true
     HSS.ScheduleCommunitiesPass()

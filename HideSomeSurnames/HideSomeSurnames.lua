@@ -290,8 +290,7 @@ local function Debug()
     local cstats = HSS.communitiesStats
     print("  window message frame found: " .. tostring(cstats.found)
         .. "  passes=" .. cstats.passes .. " rewritten=" .. cstats.rewritten
-        .. " windowHooked=" .. tostring(cstats.shownHooked)
-        .. " addMessageHooked=" .. tostring(cstats.addMessageHooked))
+        .. " windowHooked=" .. tostring(cstats.shownHooked))
     print("  events registered: "
         .. (#cstats.registered > 0 and table.concat(cstats.registered, ", ") or "(none)")
         .. (#cstats.failed > 0 and ("  rejected by client: " .. table.concat(cstats.failed, ", ")) or ""))

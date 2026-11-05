@@ -45,8 +45,10 @@ If you're sharing a copy with your own guild, edit `HSS.surnames` there so new i
 - `/hss add <surname>` / `/hss remove <surname>` / `/hss list` - manage surnames without the panel
 - `/hss reset` - go back to the defaults in `Config.lua`
 - `/hss debug` - diagnostics (client build, hook status, which Options API was used, target name before/after). Include this output in bug reports.
+- `/hss debug titles` - pet-title diagnostics: what the pet's tooltip lines and nameplate contain (target the pet, hover it, then run this)
 
 ## Scope and limitations
+- Pet owner titles are shortened too: `<Lappy Mhmm's Pet>` becomes `<Lappy's Pet>` (mouseover tooltip and the pet's nameplate), using the same surname list. This works on any pet whose title carries a hidden surname, and only for English-style possessives. Where the title lives in the game's UI wasn't known when this was added, so if a pet title still shows the surname, run `/hss debug titles` with the pet targeted (and after hovering it) and include the output in a bug report.
 - Covers nameplates, unit/party/raid frames, and chat in **say, party, guild and guild officer**. Whispers, world/custom channels, yell, raid and instance chat (including dungeon-finder party chat) always show full names. Tooltips, /who and LFG are not covered.
 - Only the visible name in chat is shortened. The hidden link data keeps the full name, so clicking a name to whisper, invite etc. still works. Whispers are never modified.
 - If the addon can't hide a surname for any reason (unsupported API, restricted content), it shows the full name instead. If a feature errors repeatedly it switches itself off for the session and says so; it never throws Lua errors.

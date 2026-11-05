@@ -1,6 +1,6 @@
 local ADDON_NAME, HSS = ...
 
-local VERSION = "0.3.1"
+local VERSION = "0.4.0"
 local PREFIX = "|cff33ff99HideSomeSurnames|r "
 
 local IsSecret = HSS.IsSecret
@@ -73,6 +73,7 @@ end
 
 local function SafeUpdateFrameName(frame)
     HSS.Try("frames", UpdateFrameName, frame)
+    HSS.Try("frames", HSS.ShortenTitleRegions, frame)
 end
 
 local hookTargets = {
@@ -174,6 +175,11 @@ local function OnLogin()
             .. "Run /hss debug.")
     end
 
+    if not HSS.InstallTooltipHook() then
+        Print("|cffff5555warning:|r tooltip API not found; pet titles in tooltips will be shown "
+            .. "in full. Run /hss debug titles.")
+    end
+
     if not HSS.BuildOptions() then
         Print("The settings panel isn't available on this client; "
             .. "use /hss add, /hss remove and /hss list.")
@@ -265,8 +271,15 @@ local function Debug()
         print("  |cffff5555the event argument never reached us; chat cannot be filtered by channel|r")
     end
 
+    print("  -- pet titles --")
+    print("  tooltip line types registered: " .. HSS.tooltipStats.lineTypes
+        .. " rewritten=" .. HSS.tooltipStats.rewritten)
+    print("  nameplate/frame scans: " .. HSS.titleStats.scanned
+        .. " rewritten=" .. HSS.titleStats.rewritten
+        .. "  (details: /hss debug titles)")
+
     print("  -- safety --")
-    for _, name in ipairs({ "frames", "chat", "ui", "startup" }) do
+    for _, name in ipairs({ "frames", "chat", "tooltip", "ui", "startup" }) do
         local state = HSS.GetFeatureState(name)
         print("  " .. name .. ": failures=" .. state.failures
             .. " disabled=" .. tostring(state.disabled)
@@ -280,7 +293,11 @@ local function HandleSlash(msg)
     command = (command or ""):lower()
 
     if command == "debug" then
-        Debug()
+        if argument:lower() == "titles" then
+            HSS.DumpTitles(print)
+        else
+            Debug()
+        end
     elseif command == "config" or command == "options" then
         if not HSS.OpenOptions() then
             Print("The settings panel isn't available; use /hss add, /hss remove and /hss list.")

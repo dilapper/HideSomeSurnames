@@ -8,8 +8,15 @@ screen. This addon hides only the surnames you list; everyone else's surname
 stays visible. It is display-only: whispers, mail and invites still use the
 full name.
 
-> **Status: v0.3.0 (in development), written before WoW: Forever's launch and untested in-game.**
-> Expect a fix round once the client is available.
+> **Built for the `Mhmm` guild.** The addon ships with `Mhmm` as its default hidden surname,
+> because that's the surname it was made for. **If you're in a different guild, remove `Mhmm`
+> and add your own surname** (see [Configure](#configure)), otherwise players surnamed Mhmm
+> will have their surname hidden for no reason.
+
+> **Status:** tested in-game on the WoW: Forever launch client (v0.3.0). Nameplates, unit
+> frames, say chat and guild chat are confirmed working; party chat appears to work; guild
+> officer chat hasn't been tested yet. No Lua errors seen so far. This is a small hobby
+> project, so expect rough edges. Bug reports are welcome (include the output of `/hss debug`).
 
 ## Install
 1. Download `HideSomeSurnames.zip` from the [latest release](../../releases/latest).
@@ -22,7 +29,7 @@ full name.
 ## Configure
 In game, open **Esc > Options > AddOns > HideSomeSurnames** (or type `/hss config`):
 
-- **Surnames to hide**: type a surname and press Enter or **Add**; **Remove** takes one off the list (up to 20).
+- **Surnames to hide**: type a surname and press Enter or **Add**; **Remove** takes one off the list (up to 20). The list starts with `Mhmm`; **Remove** it if it isn't your guild's surname.
 - **Chat channels**: tick Say, Party, Guild and/or Guild officer.
 
 Changes apply immediately and are saved for your whole account. If the settings panel isn't
@@ -30,6 +37,7 @@ available on your client, the slash commands below do the same job.
 
 `HideSomeSurnames/Config.lua` only provides the **first-run defaults** (`Mhmm`, all four
 channels) and what `/hss reset` goes back to. Editing it later doesn't change saved settings.
+If you're sharing a copy with your own guild, edit `HSS.surnames` there so new installs and `/hss reset` start from your surname instead.
 
 ## Commands
 - `/hss` - show status and the hidden surname list

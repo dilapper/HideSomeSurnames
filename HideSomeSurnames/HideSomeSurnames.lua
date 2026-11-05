@@ -1,6 +1,6 @@
 local ADDON_NAME, HSS = ...
 
-local VERSION = "0.3.0"
+local VERSION = "0.3.1"
 local PREFIX = "|cff33ff99HideSomeSurnames|r "
 
 local IsSecret = HSS.IsSecret

@@ -276,12 +276,10 @@ local function makeFakeFrame(created, kind, name)
 end
 
 local function withClient(setup, fn)
-    local saved = { CreateFrame = _G.CreateFrame, Settings = _G.Settings,
-        InterfaceOptions_AddCategory = _G.InterfaceOptions_AddCategory,
-        InterfaceOptionsFrame_OpenToCategory = _G.InterfaceOptionsFrame_OpenToCategory }
+    local saved = { CreateFrame = _G.CreateFrame, Settings = _G.Settings }
     local created = {}
     _G.CreateFrame = function(kind, name) return makeFakeFrame(created, kind, name) end
-    _G.Settings, _G.InterfaceOptions_AddCategory, _G.InterfaceOptionsFrame_OpenToCategory = nil, nil, nil
+    _G.Settings = nil
     setup(created)
     local ok, err = pcall(fn, created)
     for key, value in pairs(saved) do _G[key] = value end
@@ -320,18 +318,6 @@ end, function(created)
     local okBad = pcall(input._scripts.OnEnterPressed, input)
     expect("panel: invalid input does not throw", okBad, true)
     expect("panel: invalid input not added", U.surnameSet["bad name"], nil)
-end)
-
-withClient(function(created)
-    _G.InterfaceOptions_AddCategory = function(panel) created.added = panel end
-    _G.InterfaceOptionsFrame_OpenToCategory = function(panel) created.openCalls = (created.openCalls or 0) + 1 end
-end, function(created)
-    local U = loadAll()
-    U.LoadSettings(nil, DEFAULTS)
-    expect("panel (InterfaceOptions): builds", U.BuildOptions(), true)
-    expect("panel (InterfaceOptions): api recorded", U.ui.api, "InterfaceOptions")
-    expect("panel (InterfaceOptions): panel registered", created.added ~= nil, true)
-    expect("panel (InterfaceOptions): opens", U.OpenOptions(), true)
 end)
 
 withClient(function() end, function()
@@ -400,7 +386,7 @@ do
     withGlobals({ TooltipDataProcessor = fakeProcessor, Enum = fakeEnum,
         issecretvalue = function(v) return v == "SECRET" end }, function()
         expect("tooltip: installs", T.InstallTooltipHook(), true)
-        expect("tooltip: registers for UnitOwner only", T.tooltipStats.lineTypes, 1)
+        expect("tooltip: registers for UnitOwner only", T.tooltipStats.registered, true)
         expect("tooltip: nothing registered for other line types",
             handlers[0] == nil and handlers[2] == nil and handlers[7] ~= nil, true)
         expect("tooltip: second install is a no-op", T.InstallTooltipHook(), true)
@@ -444,23 +430,187 @@ do
         expect("tooltip: breaker trips after 3 failures", T.FeatureEnabled("tooltip"), false)
     end)
 
-    -- a client without a UnitOwner line type: fall back to every numeric type
+    -- a client without a UnitOwner line type: nothing registered, no error
     local T3 = loadTitleModules()
-    local fallbackHandlers = {}
+    local registeredAny = false
     withGlobals({
-        TooltipDataProcessor = { AddLinePreCall = function(lineType, fn) fallbackHandlers[lineType] = fn end },
-        Enum = { TooltipDataLineType = { None = 0, UnitName = 2, Other = 5 } },
+        TooltipDataProcessor = { AddLinePreCall = function() registeredAny = true end },
+        Enum = { TooltipDataLineType = { None = 0, UnitName = 2 } },
     }, function()
-        expect("tooltip fallback: installs", T3.InstallTooltipHook(), true)
-        expect("tooltip fallback: registers for every numeric line type", T3.tooltipStats.lineTypes, 3)
-        local line = { leftText = "<Lappy Mhmm's Pet>" }
-        fallbackHandlers[5](nil, line)
-        expect("tooltip fallback: still rewrites", line.leftText, "<Lappy's Pet>")
+        expect("tooltip (no UnitOwner type): reports unavailable", T3.InstallTooltipHook(), false)
+        expect("tooltip (no UnitOwner type): registers nothing", registeredAny, false)
     end)
 
     local T2 = loadTitleModules()
     withGlobals({ TooltipDataProcessor = false, Enum = false }, function()
         expect("tooltip: no API -> reports false, no throw", select(2, pcall(T2.InstallTooltipHook)), false)
+    end)
+end
+
+-- ---------- player names in the Guild & Communities chat pane ----------
+-- the exact layout captured in game: brackets outside the link, colour-wrapped name
+local PANE_LINE = "[|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h"
+    .. "|cffaad372Lappy Mhmm|r|h]: |Kw131|k"
+local PANE_LINE_SHORT = "[|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h"
+    .. "|cffaad372Lappy|r|h]: |Kw131|k"
+
+local function community(text) return HSS.StripSurnameInCommunityLinks(text, set) end
+
+expect("community link: real pane line", community(PANE_LINE), PANE_LINE_SHORT)
+expect("community link: idempotent", community(community(PANE_LINE)), PANE_LINE_SHORT)
+expect("community link: payload and trailing token untouched",
+    community(PANE_LINE):find("|HplayerCommunity:Lappy Mhmm:215722452:1:1793849258293000:21228272429055|h", 1, true) ~= nil
+        and community(PANE_LINE):sub(-11) == "]: |Kw131|k", true)
+expect("community link: other surname untouched",
+    community("[|HplayerCommunity:Dave Smith:1:1:2:3|h|cffaad372Dave Smith|r|h]: hi"),
+    "[|HplayerCommunity:Dave Smith:1:1:2:3|h|cffaad372Dave Smith|r|h]: hi")
+expect("community link: any link type", community("|Hplayer:Lappy Mhmm:1|h|cffaad372Lappy Mhmm|r|h: hi"),
+    "|Hplayer:Lappy Mhmm:1|h|cffaad372Lappy|r|h: hi")
+expect("community link: uncoloured link text", community("[|Hplayer:Lappy Mhmm:1|hLappy Mhmm|h]: hi"),
+    "[|Hplayer:Lappy Mhmm:1|hLappy|h]: hi")
+expect("community link: link text with other markup is left alone",
+    community("|Hplayer:Lappy Mhmm:1|h|cffaad372|TInterface\\Icons\\X:0|t Lappy Mhmm|r|h: hi"),
+    "|Hplayer:Lappy Mhmm:1|h|cffaad372|TInterface\\Icons\\X:0|t Lappy Mhmm|r|h: hi")
+expect("community link: two links, only the matching one changes",
+    community("[|HplayerCommunity:A Mhmm:1|h|cff111111A Mhmm|r|h] [|HplayerCommunity:B Smith:2|h|cff222222B Smith|r|h]"),
+    "[|HplayerCommunity:A Mhmm:1|h|cff111111A|r|h] [|HplayerCommunity:B Smith:2|h|cff222222B Smith|r|h]")
+expect("community link: a non-name link is left alone",
+    community("|Hitem:1234:0|h[Cavalier's Boots]|h"), "|Hitem:1234:0|h[Cavalier's Boots]|h")
+expect("community link: a name typed in the message is left alone",
+    community("[|HplayerCommunity:A Mhmm:1|h|cff111111A Mhmm|r|h]: hi Dave Mhmm and [Dave Mhmm]"),
+    "[|HplayerCommunity:A Mhmm:1|h|cff111111A|r|h]: hi Dave Mhmm and [Dave Mhmm]")
+expect("community link: no link at all", community("[Lappy Mhmm]: hello"), "[Lappy Mhmm]: hello")
+expect("community link: empty set hides nothing",
+    HSS.StripSurnameInCommunityLinks(PANE_LINE, HSS.BuildSurnameSet({})), PANE_LINE)
+expect("community link: nil", community(nil), nil)
+expect("community link: number", community(4), 4)
+
+-- ---------- Guild & Communities pane (stubbed client) ----------
+local function loadCommunities()
+    local H = {}
+    for _, file in ipairs({ "Core", "Chat", "Settings", "Communities" }) do
+        assert(loadfile("HideSomeSurnames/" .. file .. ".lua"))("HideSomeSurnames", H)
+    end
+    H.LoadSettings(nil, DEFAULTS)
+    return H
+end
+
+local function fakeMessageFrame(record)
+    local f = {}
+    function f:TransformMessages(predicateFn, transformFn)
+        record.calls = (record.calls or 0) + 1
+        record.predicate, record.transform = predicateFn, transformFn
+    end
+    return f
+end
+
+local immediateTimer = { After = function(_, fn) fn() end }
+
+do
+    -- found at the real path
+    local C = loadCommunities()
+    local record = {}
+    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame(record) } },
+        C_Timer = immediateTimer }, function()
+        C.ScheduleCommunitiesPass()
+        expect("communities: message frame found", C.communitiesStats.found, true)
+        expect("communities: TransformMessages called once", record.calls, 1)
+
+        expect("communities: predicate accepts a name line", record.predicate(PANE_LINE), true)
+        expect("communities: predicate rejects a line without a link", record.predicate("hello"), false)
+        expect("communities: predicate rejects nil", record.predicate(nil), false)
+        local out, r, extra = record.transform(PANE_LINE, 0.5, "EXTRA")
+        expect("communities: transform rewrites the name", out, PANE_LINE_SHORT)
+        expect("communities: transform keeps other args", tostring(r) .. tostring(extra), "0.5EXTRA")
+        expect("communities: rewrite counted", C.communitiesStats.rewritten, 1)
+
+        C.SetChannel("GUILD", false)
+        expect("communities: Guild checkbox off -> predicate rejects", record.predicate(PANE_LINE), false)
+        C.SetChannel("GUILD", true)
+        expect("communities: Guild checkbox on again", record.predicate(PANE_LINE), true)
+
+        -- a failing stripper never reaches the game and trips the breaker at 3
+        C.StripSurnameInCommunityLinks = function() error("boom") end
+        local last
+        for _ = 1, 4 do last = record.transform(PANE_LINE) end
+        expect("communities: failing stripper returns the original line", last, PANE_LINE)
+        expect("communities: breaker trips after 3 failures", C.FeatureEnabled("communities"), false)
+        local before = record.calls
+        C.ScheduleCommunitiesPass()
+        expect("communities: disabled feature does no more passes", record.calls, before)
+    end)
+
+    -- not available: no window, a frame without TransformMessages, a forbidden window
+    for label, window in pairs({
+        ["no window"] = false,
+        ["no TransformMessages"] = { Chat = { MessageFrame = {} } },
+        ["forbidden window"] = { IsForbidden = function() return true end, Chat = {} },
+    }) do
+        local E = loadCommunities()
+        withGlobals({ CommunitiesFrame = window, C_Timer = immediateTimer }, function()
+            local ok = pcall(E.ScheduleCommunitiesPass)
+            expect("communities (" .. label .. "): does not throw", ok, true)
+            expect("communities (" .. label .. "): reports not found", E.communitiesStats.found, false)
+        end)
+    end
+
+    -- no timer API
+    local F = loadCommunities()
+    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame({}) } }, C_Timer = false }, function()
+        expect("communities (no timer): does not throw", pcall(F.ScheduleCommunitiesPass), true)
+        expect("communities (no timer): no pass runs", F.communitiesStats.passes, 0)
+    end)
+
+    -- event registration: a rejected name must not throw or trip the breaker
+    local G = loadCommunities()
+    local registered = {}
+    local eventFrame = { RegisterEvent = function(_, event)
+        if event == "CLUB_MESSAGE_UPDATED" then error("unknown event") end
+        registered[#registered + 1] = event
+    end }
+    expect("communities events: registration does not throw", pcall(G.RegisterCommunitiesEvents, eventFrame), true)
+    expect("communities events: accepted ones registered", table.concat(G.communitiesStats.registered, ","),
+        "CLUB_MESSAGE_ADDED,CLUB_MESSAGE_HISTORY_RECEIVED")
+    expect("communities events: rejected one recorded", table.concat(G.communitiesStats.failed, ","),
+        "CLUB_MESSAGE_UPDATED")
+    expect("communities events: rejection doesn't count as a failure", G.GetFeatureState("communities").failures, 0)
+    expect("communities events: recognises its events", G.IsCommunitiesEvent("CLUB_MESSAGE_ADDED"), true)
+    expect("communities events: ignores chat events", G.IsCommunitiesEvent("CHAT_MSG_GUILD"), false)
+
+    -- window OnShow hook
+    local H2 = loadCommunities()
+    local recordH = {}
+    local shownHandlers = {}
+    local window = { Chat = { MessageFrame = fakeMessageFrame(recordH) },
+        HookScript = function(_, event, fn) shownHandlers[event] = fn end }
+    withGlobals({ CommunitiesFrame = window, C_Timer = immediateTimer }, function()
+        expect("communities hook: hooks the window", H2.HookCommunitiesWindow(), true)
+        expect("communities hook: hooks OnShow", type(shownHandlers.OnShow), "function")
+        local callsAfterHook = recordH.calls
+        shownHandlers.OnShow()
+        expect("communities hook: OnShow triggers one pass", recordH.calls, callsAfterHook + 1)
+        shownHandlers.OnShow = nil
+        expect("communities hook: second call is a no-op", H2.HookCommunitiesWindow(), true)
+        expect("communities hook: not hooked twice", shownHandlers.OnShow, nil)
+    end)
+    withGlobals({ CommunitiesFrame = false }, function()
+        local I = loadCommunities()
+        expect("communities hook: no window -> false, no throw", select(2, pcall(I.HookCommunitiesWindow)), false)
+    end)
+
+    -- passes in the same tick are coalesced into one
+    local K = loadCommunities()
+    local timerCalls, pendingTimer = 0, nil
+    local manualTimer = { After = function(_, fn) timerCalls = timerCalls + 1; pendingTimer = fn end }
+    local recordK = {}
+    withGlobals({ CommunitiesFrame = { Chat = { MessageFrame = fakeMessageFrame(recordK) } },
+        C_Timer = manualTimer }, function()
+        K.ScheduleCommunitiesPass(); K.ScheduleCommunitiesPass(); K.ScheduleCommunitiesPass()
+        expect("communities: same-tick passes are coalesced", timerCalls, 1)
+        pendingTimer()
+        expect("communities: the coalesced pass ran once", recordK.calls, 1)
+        K.ScheduleCommunitiesPass()
+        expect("communities: can schedule again after it ran", timerCalls, 2)
     end)
 end
 

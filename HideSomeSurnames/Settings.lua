@@ -17,7 +17,9 @@ HSS.surnameSet = {}
 HSS.chatEventSet = {}
 
 HSS.db = nil
-HSS.defaults = nil
+
+-- The first-run defaults passed to LoadSettings; what ResetSettings goes back to.
+local savedDefaults = nil
 
 -- Called after any change (UI/slash) so the game-facing layer can refresh.
 HSS.onSettingsChanged = nil
@@ -73,18 +75,14 @@ end
 
 -- Rebuilds the live sets from the saved settings.
 local function RebuildLive()
-    Clear(HSS.surnameSet)
-    Clear(HSS.chatEventSet)
+    HSS.BuildSurnameSet(HSS.db and HSS.db.surnames, HSS.surnameSet)
+    HSS.FillChatEventSet(HSS.chatEventSet, HSS.db and HSS.db.chatChannels)
+end
 
-    if not HSS.db then
-        return
-    end
-
-    for _, surname in ipairs(HSS.db.surnames) do
-        HSS.surnameSet[surname:lower()] = true
-    end
-
-    HSS.FillChatEventSet(HSS.chatEventSet, HSS.db.chatChannels)
+local function DefaultChannel(defaults, channel)
+    return defaults ~= nil
+        and type(defaults.chatChannels) == "table"
+        and defaults.chatChannels[channel] == true
 end
 
 local function Changed()
@@ -109,15 +107,13 @@ local function SeedFromDefaults(db, defaults)
     end
 
     for _, channel in ipairs(HSS.CHAT_CHANNELS) do
-        db.chatChannels[channel] = defaults ~= nil
-            and type(defaults.chatChannels) == "table"
-            and defaults.chatChannels[channel] == true
+        db.chatChannels[channel] = DefaultChannel(defaults, channel)
     end
 end
 
 -- Validates saved data and returns the table to store as HideSomeSurnamesDB.
 function HSS.LoadSettings(db, defaults)
-    HSS.defaults = defaults
+    savedDefaults = defaults
 
     if type(db) ~= "table" then
         db = {}
@@ -143,9 +139,7 @@ function HSS.LoadSettings(db, defaults)
             if type(channels[channel]) == "boolean" then
                 cleanChannels[channel] = channels[channel]
             else
-                cleanChannels[channel] = defaults ~= nil
-                    and type(defaults.chatChannels) == "table"
-                    and defaults.chatChannels[channel] == true
+                cleanChannels[channel] = DefaultChannel(defaults, channel)
             end
         end
         db.chatChannels = cleanChannels
@@ -233,7 +227,7 @@ function HSS.ResetSettings()
         return false
     end
 
-    SeedFromDefaults(HSS.db, HSS.defaults)
+    SeedFromDefaults(HSS.db, savedDefaults)
     Changed()
     return true
 end

@@ -1,6 +1,6 @@
 local ADDON_NAME, HSS = ...
 
-local VERSION = "0.4.1"
+local VERSION = "0.5.0"
 local PREFIX = "|cff33ff99HideSomeSurnames|r "
 
 local IsSecret = HSS.IsSecret
@@ -35,7 +35,8 @@ end
 -- the unit's real name is never changed.
 
 local function UpdateFrameName(frame)
-    if not frame then
+    -- Nothing to hide: skip all the unit lookups (this runs on every frame update).
+    if not frame or next(surnameSet) == nil then
         return
     end
 
@@ -112,6 +113,7 @@ end
 
 HSS.onSettingsChanged = function()
     HSS.ScheduleChatPass()
+    HSS.ScheduleCommunitiesPass()
     RefreshVisibleFrames()
 end
 
@@ -135,6 +137,10 @@ do
         events:RegisterEvent(event)
     end
 end
+
+-- Guild & Communities window chat: each event is registered separately because
+-- an unknown event name raises an error (see Communities.lua).
+HSS.RegisterCommunitiesEvents(events)
 
 local function LoadSavedSettings()
     local defaults = { surnames = HSS.surnames, chatChannels = HSS.chatChannels }
@@ -183,19 +189,24 @@ local function OnLogin()
         Print("The settings panel isn't available on this client; "
             .. "use /hss add, /hss remove and /hss list.")
     end
+
+    -- The Communities window may already exist, or load later (see ADDON_LOADED).
+    HSS.Try("communities", HSS.HookCommunitiesWindow)
 end
 
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 == ADDON_NAME then
             LoadSavedSettings()
+        elseif arg1 == "Blizzard_Communities" then
+            HSS.Try("communities", HSS.HookCommunitiesWindow)
         end
     elseif event == "PLAYER_LOGIN" then
         HSS.Try("startup", OnLogin)
-    elseif event == "PLAYER_ENTERING_WORLD" then
-        HSS.Try("chat", HSS.ScheduleChatPass)
+    elseif HSS.IsCommunitiesEvent(event) then
+        HSS.ScheduleCommunitiesPass() -- already failure-proof
     else
-        HSS.ScheduleChatPass() -- already failure-proof
+        HSS.ScheduleChatPass() -- chat events and PLAYER_ENTERING_WORLD; already failure-proof
     end
 end)
 
@@ -216,7 +227,7 @@ local function Status()
         end
     end
     print("In chat: " .. (#channels > 0 and table.concat(channels, ", ") or "(none)")
-        .. " (plus nameplates and unit frames)")
+        .. " (plus nameplates, unit frames, pet titles in tooltips and the Guild & Communities chat pane)")
 
     print("|cffffff00/hss config|r - open settings    |cffffff00/hss add <surname>|r    "
         .. "|cffffff00/hss remove <surname>|r    |cffffff00/hss list|r    "
@@ -271,12 +282,21 @@ local function Debug()
     end
 
     print("  -- pet titles --")
-    print("  tooltip line types registered: " .. HSS.tooltipStats.lineTypes
+    print("  tooltip handler registered: " .. tostring(HSS.tooltipStats.registered)
         .. " rewritten=" .. HSS.tooltipStats.rewritten
         .. "  (details: /hss debug titles)")
 
+    print("  -- guild & communities chat pane --")
+    local cstats = HSS.communitiesStats
+    print("  window message frame found: " .. tostring(cstats.found)
+        .. "  passes=" .. cstats.passes .. " rewritten=" .. cstats.rewritten
+        .. " windowHooked=" .. tostring(cstats.shownHooked))
+    print("  events registered: "
+        .. (#cstats.registered > 0 and table.concat(cstats.registered, ", ") or "(none)")
+        .. (#cstats.failed > 0 and ("  rejected by client: " .. table.concat(cstats.failed, ", ")) or ""))
+
     print("  -- safety --")
-    for _, name in ipairs({ "frames", "chat", "tooltip", "ui", "startup" }) do
+    for _, name in ipairs({ "frames", "chat", "tooltip", "communities", "ui", "startup" }) do
         local state = HSS.GetFeatureState(name)
         print("  " .. name .. ": failures=" .. state.failures
             .. " disabled=" .. tostring(state.disabled)

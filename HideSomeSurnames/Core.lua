@@ -9,9 +9,16 @@ end
 
 HSS.IsSecret = IsSecret
 
--- Turns { "Mhmm", "Other" } into a lowercase lookup set.
-function HSS.BuildSurnameSet(list)
-    local set = {}
+-- Turns { "Mhmm", "Other" } into a lowercase lookup set. With `into`, that table
+-- is cleared and refilled in place, so anything already holding it sees the
+-- change.
+function HSS.BuildSurnameSet(list, into)
+    local set = into or {}
+    if into then
+        for key in pairs(into) do
+            into[key] = nil
+        end
+    end
     for _, surname in ipairs(list or {}) do
         if type(surname) == "string" and surname ~= "" then
             set[surname:lower()] = true
@@ -81,6 +88,36 @@ function HSS.StripSurnameInLinks(message, surnameSet)
         end
 
         return nil -- leave this link exactly as Blizzard wrote it
+    end)
+
+    return result
+end
+
+-- Player names in the Guild & Communities chat pane. In game its lines look like:
+--   [|HplayerCommunity:Lappy Mhmm:...|h|cffaad372Lappy Mhmm|r|h]: text
+-- i.e. the link text is a colour-wrapped name. Only that visible link text is
+-- rewritten (any link type); the payload (what click-to-whisper reads) is never
+-- touched, and names typed inside a message are left alone. Idempotent; nil /
+-- non-string / secret input is returned unchanged.
+function HSS.StripSurnameInCommunityLinks(message, surnameSet)
+    if IsSecret(message) or type(message) ~= "string" or not message:find("|H", 1, true) then
+        return message
+    end
+
+    local result = message:gsub("(|H[^|]*|h)(.-)|h", function(openTag, visible)
+        local colour, name, reset = visible:match("^(|c%x%x%x%x%x%x%x%x)([^|]+)(|r)$")
+        if not colour then
+            colour, name, reset = "", visible:match("^([^|]+)$"), ""
+        end
+        if not name then
+            return nil -- other markup inside the link: leave it exactly as it was
+        end
+
+        local short = HSS.StripSurname(name, surnameSet)
+        if short == name then
+            return nil
+        end
+        return openTag .. colour .. short .. reset .. "|h"
     end)
 
     return result

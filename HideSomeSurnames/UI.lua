@@ -15,13 +15,13 @@ local CHANNEL_LABELS = {
 }
 
 local ui = {
-    api = "none",   -- which Options API registered the panel
+    api = "none",   -- "Settings" once the panel is registered
     panel = nil,
     category = nil,
 }
 HSS.ui = ui
 
-local input, statusText, addButton
+local input, statusText
 local rows = {}
 local checkboxes = {}
 
@@ -88,8 +88,9 @@ local function BuildPanel()
     description:SetWidth(580)
     description:SetJustifyH("LEFT")
     description:SetText("Players with these surnames are shown by forename only on nameplates, "
-        .. "unit frames and in the chosen chat channels. Whispers, mail and invites still "
-        .. "use the full name. Other players' surnames stay visible.")
+        .. "unit frames, pet titles in tooltips, the Guild & Communities chat pane and the "
+        .. "chosen chat channels. Whispers, mail and invites still use the full name. "
+        .. "Other players' surnames stay visible.")
 
     -- Left column: surnames ------------------------------------------------
     local surnameHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -109,7 +110,7 @@ local function BuildPanel()
         input:ClearFocus()
     end))
 
-    addButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    local addButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     addButton:SetSize(60, 24)
     addButton:SetPoint("LEFT", input, "RIGHT", 8, 0)
     addButton:SetText("Add")
@@ -205,12 +206,6 @@ local function Register(panel)
         return true
     end
 
-    if type(InterfaceOptions_AddCategory) == "function" then
-        InterfaceOptions_AddCategory(panel)
-        ui.api = "InterfaceOptions"
-        return true
-    end
-
     return false
 end
 
@@ -242,13 +237,6 @@ function HSS.OpenOptions()
             else
                 Settings.OpenToCategory(PANEL_NAME)
             end
-            return true
-        end
-
-        if ui.api == "InterfaceOptions" and type(InterfaceOptionsFrame_OpenToCategory) == "function" then
-            -- Called twice: the first call can open the window on the wrong page.
-            InterfaceOptionsFrame_OpenToCategory(ui.panel)
-            InterfaceOptionsFrame_OpenToCategory(ui.panel)
             return true
         end
 

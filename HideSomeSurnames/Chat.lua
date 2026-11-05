@@ -55,7 +55,6 @@ HSS.chatStats = {
     transformed = 0,   -- lines actually rewritten
     lastEvent = nil,
     passes = 0,
-    noScheduler = false,
 }
 
 -- TransformMessages callback arguments:
@@ -94,10 +93,6 @@ function HSS.MakeChatTransformers(eventSet, surnameSet)
     end
 
     local function transform(message, ...)
-        if not HSS.FeatureEnabled("chat") then
-            return message, ...
-        end
-
         local ok, result = HSS.Try("chat", HSS.StripSurnameInLinks, message, surnameSet)
         if ok and type(result) == "string" and not IsSecret(result) then
             if result ~= message then
@@ -179,14 +174,12 @@ function HSS.ScheduleChatPass()
     end
 
     if not (C_Timer and type(C_Timer.After) == "function") then
-        HSS.chatStats.noScheduler = true
         return
     end
 
     passScheduled = true
     local ok = HSS.Try("chat", C_Timer.After, 0, function()
-        HSS.Try("chat", RunPass)
-        passScheduled = false
+        HSS.Try("chat", RunPass) -- RunPass clears passScheduled first thing
     end)
 
     if not ok then
